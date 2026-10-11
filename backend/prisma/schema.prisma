@@ -8,12 +8,66 @@ datasource db {
 }
 
 model Product {
-  id          Int      @id @default(autoincrement())
+  id          Int         @id @default(autoincrement())
   name        String
   description String?
   category    String?
   price       Float
   imageUrl    String
   stock       Int
-  createdAt   DateTime @default(now())
+  version     Int         @default(0) // Phục vụ Optimistic Locking (Task 10)
+  createdAt   DateTime    @default(now())
+
+  orderItems  OrderItem[]
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  passwordHash  String
+  name          String?
+  loyaltyPoints Int      @default(0) // Điểm thưởng tích lũy (Task 10)
+  createdAt     DateTime @default(now())
+
+  orders        Order[]
+}
+
+model Order {
+  id        Int         @id @default(autoincrement())
+  userId    Int?
+  user      User?       @relation(fields: [userId], references: [id])
+  total     Float
+  status    String      @default("PENDING") // PENDING, PAID, PREPARING, READY, COMPLETED, CANCELLED, PAYMENT_FAILED
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  items     OrderItem[]
+  payments  Payment[]
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+
+  size      String   // "S", "M", "L"
+  toppings  String?  // Danh sách topping, ví dụ: "Trân châu đen, Kem Macchiato"
+  price     Float    // Đơn giá tại thời điểm mua (đã gồm size + topping)
+  qty       Int      @default(1)
+  lineTotal Float
+
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id             Int      @id @default(autoincrement())
+  orderId        Int
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  idempotencyKey String   @unique // Chống trùng lặp giao dịch (Task 10)
+  amount         Float
+  method         String   // "WALLET", "CARD"
+  createdAt      DateTime @default(now())
 }
