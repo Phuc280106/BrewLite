@@ -10,7 +10,7 @@ import ProductCard from '../components/menu/ProductCard';
 import ProductDetailModal from '../components/ProductDetailModal';
 import CartBottomBar from '../components/cart/CartBottomBar';
 import CartDrawer from '../components/cart/CartDrawer';
-
+import {api} from '../lib/api'
 const CATEGORIES = [
   'All Drinks',
   'Coffee',
@@ -35,9 +35,7 @@ export default function Home() {
     async function fetchProducts() {
       try {
         setState('Loading');
-        const backendHost =
-          typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-        const res = await axios.get(`http://${backendHost}:3001/products`);
+        const res = await api.get('/products');
 
         if (res.data && res.data.length > 0) {
           const mapped: ProductItem[] = res.data.map((p: any) => ({
