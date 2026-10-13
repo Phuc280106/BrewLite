@@ -2,22 +2,13 @@
 
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { CartItem, ProductItem } from '../../types';
-
-interface AddToCartOptions {
-  product: ProductItem;
-  size: 'S' | 'M' | 'L';
-  toppings: string[];
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
-}
+import { CartItem, CartItemOptions } from '../../types';
 
 interface CartStore {
   cart: CartItem[];
   ordered: boolean;
   toastMessage: string | null;
-  addToCart: (options: AddToCartOptions) => void;
+  addToCart: (options: CartItemOptions) => void;
   updateQuantity: (cartItemId: string, change: number) => void;
   checkout: () => void;
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ProductItem } from '../../types';
 import { api, Product as ProductResponse } from '../../lib/api';
-import ProductDetailModal from '../ProductDetailModal';
+import ProductDetailModal from '../product/ProductDetailModal';
 import Icon from '../common/Icon';
 import ProductCard from './ProductCard';
 import { useCartStore } from '../cart/useCartStore';

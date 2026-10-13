@@ -11,6 +11,15 @@ export interface ProductItem {
   image: string;
 }
 
+export interface CartItemOptions {
+  product: ProductItem;
+  size: 'S' | 'M' | 'L';
+  toppings: string[];
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
 export interface CartItem {
   cartItemId: string; // Khóa duy nhất theo: id-size-toppings
   productId: number;
