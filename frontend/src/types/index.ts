@@ -31,6 +31,18 @@ export interface CartItem {
   quantity: number;
 }
 
+export interface CheckoutError {
+  message?: string | string[];
+}
+
+export interface CreateOrderResponse {
+  orderId: number;
+  orderCode: string;
+  total: number;
+  status: string;
+  createdAt: string;
+}
+
 export type IconName =
   | 'cup'
   | 'bell'

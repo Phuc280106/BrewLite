@@ -10,7 +10,7 @@ interface CartStore {
   toastMessage: string | null;
   addToCart: (options: CartItemOptions) => void;
   updateQuantity: (cartItemId: string, change: number) => void;
-  checkout: () => void;
+  completeCheckout: () => void;
 }
 
 interface PersistedCartState {
@@ -81,7 +81,7 @@ export const useCartStore = create<CartStore>()(
             })
             .filter((item): item is CartItem => item !== null),
         })),
-      checkout: () => set({ ordered: true, cart: [] }),
+      completeCheckout: () => set({ ordered: true, cart: [] }),
     }),
     {
       name: 'brewlite-cart',

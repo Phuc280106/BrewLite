@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { CartItem } from '../../types';
+import { CartItem, CheckoutError } from '../../types';
 import Icon from '../common/Icon';
 
 interface CartDrawerProps {
@@ -9,6 +9,9 @@ interface CartDrawerProps {
   cart: CartItem[];
   total: number;
   ordered: boolean;
+  isSubmitting: boolean;
+  orderCode: string | null;
+  checkoutError: CheckoutError | null;
   onClose: () => void;
   onUpdateQuantity: (cartItemId: string, change: number) => void;
   onCheckout: () => void;
@@ -19,6 +22,9 @@ export default function CartDrawer({
   cart,
   total,
   ordered,
+  isSubmitting,
+  orderCode,
+  checkoutError,
   onClose,
   onUpdateQuantity,
   onCheckout,
@@ -54,9 +60,9 @@ export default function CartDrawer({
             </span>
             <h3>Order received!</h3>
             <p>
-              Your coffee moment is on its way.
+              Mã đơn hàng của bạn: <strong>{orderCode}</strong>
               <br />
-              Thanks for choosing BrewLite.
+              Đơn hàng đang ở trạng thái chờ xử lý.
             </p>
           </div>
         ) : cart.length === 0 ? (
@@ -111,8 +117,23 @@ export default function CartDrawer({
               <strong>{formatMoney(total)}</strong>
             </div>
 
-            <button className="primary-button checkout" onClick={onCheckout}>
-              Tiến hành đặt hàng <Icon name="arrow" />
+            {checkoutError && (
+              <p role="alert" className="text-sm text-red-600">
+                {Array.isArray(checkoutError.message)
+                  ? checkoutError.message.join(', ')
+                  : checkoutError.message ??
+                    'Could not place the order. Please try again.'}
+              </p>
+            )}
+
+            <button
+              className="primary-button checkout"
+              onClick={onCheckout}
+              disabled={isSubmitting}
+              aria-busy={isSubmitting}
+            >
+              {isSubmitting ? 'Placing order...' : 'Tiến hành đặt hàng'}
+              {!isSubmitting && <Icon name="arrow" />}
             </button>
             <p className="demo-note">Demo checkout · Thử nghiệm quy trình</p>
           </>
