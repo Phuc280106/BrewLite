@@ -15,6 +15,7 @@ async function bootstrap() {
     .setTitle('BrewLite API')
     .setDescription('Tài liệu API cho dự án BrewLite')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('swagger', app, document); // Đường dẫn vào Swagger là /api
