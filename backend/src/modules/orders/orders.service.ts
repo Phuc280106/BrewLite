@@ -4,19 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service.js';
+import {
+  SIZE_EXTRA_PRICE,
+  TOPPING_PRICE,
+} from '../options/options.constants.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
-
-const SIZE_EXTRA: Record<CreateOrderDto['items'][number]['size'], number> = {
-  S: 0,
-  M: 5000,
-  L: 10000,
-};
-
-const TOPPING_PRICE: Record<string, number> = {
-  pearl: 5000,
-  cheese: 10000,
-  peach_jelly: 8000,
-};
 
 @Injectable()
 export class OrdersService {
@@ -58,7 +50,7 @@ export class OrdersService {
           (total, topping) => total + TOPPING_PRICE[topping],
           0
         );
-        const price = product.price + SIZE_EXTRA[item.size] + toppingsPrice;
+        const price = product.price + SIZE_EXTRA_PRICE[item.size] + toppingsPrice;
 
         return {
           productId: item.productId,

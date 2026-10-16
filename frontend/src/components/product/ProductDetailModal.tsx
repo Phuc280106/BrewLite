@@ -41,6 +41,8 @@ function ProductDetailDialog({
   onAddToCart,
 }: ProductDetailDialogProps) {
   const {
+    sizes,
+    toppings,
     selectedSize,
     setSelectedSize,
     selectedToppings,
@@ -104,6 +106,8 @@ function ProductDetailDialog({
           <hr className="border-stone-200" />
 
           <ProductOptions
+            sizes={sizes}
+            toppings={toppings}
             selectedSize={selectedSize}
             onSelectSize={setSelectedSize}
             selectedToppings={selectedToppings}

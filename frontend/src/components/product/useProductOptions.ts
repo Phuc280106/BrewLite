@@ -1,22 +1,31 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CartItemOptions, ProductItem } from '../../types';
-import { PRODUCT_SIZES, PRODUCT_TOPPINGS, ProductSize } from './product-options';
+import { ProductSize } from './product-options';
+import { useOptionsStore } from './useOptionsStore';
 
 export default function useProductOptions(
   product: ProductItem | null,
   onAddToCart: (options: CartItemOptions) => void,
   onClose: () => void
 ) {
+  const sizes = useOptionsStore((state) => state.sizes);
+  const toppings = useOptionsStore((state) => state.toppings);
+  const fetchOptions = useOptionsStore((state) => state.fetchOptions);
+
+  useEffect(() => {
+    void fetchOptions();
+  }, [fetchOptions]);
+
   const [selectedSize, setSelectedSize] = useState<ProductSize>('M');
   const [selectedToppings, setSelectedToppings] = useState<string[]>([]);
   const [quantity, setQuantity] = useState(1);
 
   const sizeExtra =
-    PRODUCT_SIZES.find((size) => size.id === selectedSize)?.extraPrice ?? 0;
+    sizes.find((size) => size.id === selectedSize)?.extraPrice ?? 0;
   const toppingsExtra = selectedToppings.reduce((total, toppingId) => {
-    const topping = PRODUCT_TOPPINGS.find((item) => item.id === toppingId);
+    const topping = toppings.find((item) => item.id === toppingId);
     return total + (topping?.price ?? 0);
   }, 0);
   const unitPrice = (product?.price ?? 0) + sizeExtra + toppingsExtra;
@@ -34,7 +43,7 @@ export default function useProductOptions(
     if (!product) return;
     onAddToCart({
       product,
-      size: selectedSize,
+      size: selectedSize as 'S' | 'M' | 'L',
       toppings: selectedToppings,
       quantity,
       unitPrice,
@@ -44,6 +53,8 @@ export default function useProductOptions(
   };
 
   return {
+    sizes,
+    toppings,
     selectedSize,
     setSelectedSize,
     selectedToppings,

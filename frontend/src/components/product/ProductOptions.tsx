@@ -1,12 +1,12 @@
 'use client';
 
-import {
-  PRODUCT_SIZES,
-  PRODUCT_TOPPINGS,
-  ProductSize,
-} from './product-options';
+import { ProductSizeOption, ProductToppingOption } from '../../types';
+import { ProductSize } from './product-options';
+import { useOptionsStore } from './useOptionsStore';
 
 interface ProductOptionsProps {
+  sizes?: ProductSizeOption[];
+  toppings?: ProductToppingOption[];
   selectedSize: ProductSize;
   onSelectSize: (size: ProductSize) => void;
   selectedToppings: string[];
@@ -19,6 +19,8 @@ interface ProductOptionsProps {
 }
 
 export default function ProductOptions({
+  sizes,
+  toppings,
   selectedSize,
   onSelectSize,
   selectedToppings,
@@ -29,6 +31,12 @@ export default function ProductOptions({
   onIncreaseQuantity,
   formatMoney,
 }: ProductOptionsProps) {
+  const storeSizes = useOptionsStore((state) => state.sizes);
+  const storeToppings = useOptionsStore((state) => state.toppings);
+
+  const activeSizes = sizes && sizes.length > 0 ? sizes : storeSizes;
+  const activeToppings = toppings && toppings.length > 0 ? toppings : storeToppings;
+
   return (
     <>
       <div>
@@ -39,7 +47,7 @@ export default function ProductOptions({
           <span className="text-xs text-stone-400">Bắt buộc</span>
         </div>
         <div className="grid grid-cols-3 gap-2.5">
-          {PRODUCT_SIZES.map((size) => {
+          {activeSizes.map((size) => {
             const isSelected = selectedSize === size.id;
             return (
               <button
@@ -72,7 +80,7 @@ export default function ProductOptions({
           <span className="text-xs text-stone-400">Tùy chọn</span>
         </div>
         <div className="space-y-2">
-          {PRODUCT_TOPPINGS.map((topping) => {
+          {activeToppings.map((topping) => {
             const isChecked = selectedToppings.includes(topping.id);
             return (
               <label

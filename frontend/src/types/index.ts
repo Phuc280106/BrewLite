@@ -11,6 +11,25 @@ export interface ProductItem {
   image: string;
 }
 
+export interface ProductSizeOption {
+  id: 'S' | 'M' | 'L' | string;
+  label: string;
+  extraPrice: number;
+}
+
+export interface ProductToppingOption {
+  id: string;
+  name: string;
+  price: number;
+}
+
+export interface ProductOptionsResponse {
+  sizes: ProductSizeOption[];
+  toppings: ProductToppingOption[];
+  sizeExtraPrice?: Record<string, number>;
+  toppingPrice?: Record<string, number>;
+}
+
 export interface CartItemOptions {
   product: ProductItem;
   size: 'S' | 'M' | 'L';

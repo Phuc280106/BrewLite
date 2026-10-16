@@ -9,9 +9,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-
-const CART_SIZES = ['S', 'M', 'L'] as const;
-const TOPPING_IDS = ['pearl', 'cheese', 'peach_jelly'] as const;
+import {
+  ALLOWED_SIZE_IDS,
+  ALLOWED_TOPPING_IDS,
+} from '../../options/options.constants.js';
+import type { ProductSizeId } from '../../options/options.constants.js';
 
 export class CreateOrderItemDto {
   @ApiProperty({ example: 12 })
@@ -19,14 +21,14 @@ export class CreateOrderItemDto {
   @Min(1)
   productId!: number;
 
-  @ApiProperty({ enum: CART_SIZES, example: 'M' })
-  @IsIn(CART_SIZES)
-  size!: (typeof CART_SIZES)[number];
+  @ApiProperty({ enum: ALLOWED_SIZE_IDS, example: 'M' })
+  @IsIn(ALLOWED_SIZE_IDS)
+  size!: ProductSizeId;
 
-  @ApiProperty({ enum: TOPPING_IDS, isArray: true, example: ['pearl'] })
+  @ApiProperty({ enum: ALLOWED_TOPPING_IDS, isArray: true, example: ['pearl'] })
   @IsArray()
   @ArrayUnique()
-  @IsIn(TOPPING_IDS, { each: true })
+  @IsIn(ALLOWED_TOPPING_IDS, { each: true })
   toppings!: string[];
 
   @ApiProperty({ example: 2, minimum: 1 })
