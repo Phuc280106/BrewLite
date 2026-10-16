@@ -3,10 +3,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Đang làm mới dữ liệu đồ uống...');
-
-  // Xóa dữ liệu cũ để tránh trùng lặp
-  await prisma.product.deleteMany();
+  console.log('Đang kiểm tra và cập nhật dữ liệu...');
 
   const products = [
     {
@@ -59,11 +56,58 @@ async function main() {
     },
   ];
 
-  for (const p of products) {
-    await prisma.product.create({ data: p });
+  const existingProductsCount = await prisma.product.count();
+  if (existingProductsCount === 0) {
+    for (const p of products) {
+      await prisma.product.create({ data: p });
+    }
+    console.log('Đã nạp thành công 6 món nước!');
+  } else {
+    console.log(`Đã có sẵn ${existingProductsCount} sản phẩm, bỏ qua tạo mới.`);
   }
 
-  console.log('Đã nạp thành công 6 món nước kèm mô tả và danh mục!');
+  // Seed Promotions (Task 10 - Option 2: Lưu khuyến mãi trong Database)
+  await prisma.promotion.deleteMany();
+  const promotions = [
+    {
+      code: 'BREW10',
+      description: 'Giảm 10% tổng đơn hàng (đơn tối thiểu 50.000đ)',
+      discountPercent: 10,
+      discountAmount: null,
+      minOrder: 50000,
+      isActive: true,
+    },
+    {
+      code: 'CHAOBAN',
+      description: 'Giảm ngay 20.000đ cho đơn từ 40.000đ',
+      discountPercent: null,
+      discountAmount: 20000,
+      minOrder: 40000,
+      isActive: true,
+    },
+    {
+      code: 'FREESHIP',
+      description: 'Hỗ trợ 15.000đ phí giao hàng cho đơn từ 60.000đ',
+      discountPercent: null,
+      discountAmount: 15000,
+      minOrder: 60000,
+      isActive: true,
+    },
+    {
+      code: 'VIP20',
+      description: 'Ưu đãi thành viên VIP: Giảm 20% cho đơn từ 100.000đ',
+      discountPercent: 20,
+      discountAmount: null,
+      minOrder: 100000,
+      isActive: true,
+    },
+  ];
+
+  for (const promo of promotions) {
+    await prisma.promotion.create({ data: promo });
+  }
+
+  console.log('Đã nạp thành công các mã khuyến mãi mẫu vào Database!');
 }
 
 main()
