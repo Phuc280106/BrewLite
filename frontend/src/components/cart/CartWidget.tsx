@@ -5,16 +5,17 @@ import axios from 'axios';
 import CartBottomBar from './CartBottomBar';
 import CartDrawer from './CartDrawer';
 import { useCartStore } from './useCartStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { api } from '@/lib/api';
 import { CheckoutError, CreateOrderResponse } from '@/types';
-
-
 
 export default function CartWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderCode, setOrderCode] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<CheckoutError | null>(null);
+  const user = useAuthStore((state) => state.user);
+  const openAuthModal = useAuthStore((state) => state.openAuthModal);
   const cart = useCartStore((state) => state.cart);
   const ordered = useCartStore((state) => state.ordered);
   const toastMessage = useCartStore((state) => state.toastMessage);
@@ -32,6 +33,12 @@ export default function CartWidget() {
 
   const handleCheckout = async () => {
     if (cart.length === 0 || isSubmitting) return;
+
+    if (!user) {
+      setIsOpen(false);
+      openAuthModal('login', 'Vui lòng đăng nhập để tiến hành đặt hàng');
+      return;
+    }
 
     setIsSubmitting(true);
     setCheckoutError(null);

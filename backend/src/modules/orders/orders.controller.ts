@@ -2,10 +2,13 @@ import {
   Body,
   Controller,
   Post,
+  Request,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { OrdersService } from './orders.service.js';
 
@@ -15,6 +18,8 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @UsePipes(
     new ValidationPipe({
       transform: true,
@@ -22,8 +27,13 @@ export class OrdersController {
       forbidNonWhitelisted: true,
     })
   )
-  @ApiOperation({ summary: 'Tạo đơn hàng ở trạng thái PENDING' })
-  create(@Body() body: CreateOrderDto) {
-    return this.ordersService.create(body);
+  @ApiOperation({
+    summary: 'Tạo đơn hàng ở trạng thái PENDING (Yêu cầu đăng nhập JWT)',
+  })
+  create(
+    @Body() body: CreateOrderDto,
+    @Request() req: { user: { id: number } }
+  ) {
+    return this.ordersService.create(body, req.user?.id);
   }
 }

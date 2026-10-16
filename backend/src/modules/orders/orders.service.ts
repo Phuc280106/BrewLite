@@ -14,7 +14,7 @@ import { CreateOrderDto } from './dto/create-order.dto.js';
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(input: CreateOrderDto) {
+  async create(input: CreateOrderDto, userId?: number) {
     return this.prisma.$transaction(async (transaction) => {
       const productIds = [...new Set(input.items.map((item) => item.productId))];
       const products = await transaction.product.findMany({
@@ -65,6 +65,7 @@ export class OrdersService {
 
       const order = await transaction.order.create({
         data: {
+          userId: userId ?? null,
           total,
           status: 'PENDING',
           items: { create: orderItems },

@@ -30,6 +30,19 @@ export interface ProductOptionsResponse {
   toppingPrice?: Record<string, number>;
 }
 
+export interface UserProfile {
+  id: number;
+  email: string;
+  name: string | null;
+  loyaltyPoints: number;
+}
+
+export interface AuthResponse {
+  message: string;
+  accessToken: string;
+  user: UserProfile;
+}
+
 export interface CartItemOptions {
   product: ProductItem;
   size: 'S' | 'M' | 'L';
