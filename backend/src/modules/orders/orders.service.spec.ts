@@ -106,4 +106,50 @@ describe('OrdersService', () => {
       total: 70000,
     });
   });
+  describe('OrdersService.pay – idempotency', () => {
+    let service: OrdersService;
+    let paymentCreate: ReturnType<typeof vi.fn>;
+    let paymentFindUnique: ReturnType<typeof vi.fn>;
+
+    const existingPayment = {
+      id: 1, orderId: 10, idempotencyKey: 'key-abc',
+      amount: 70000, method: 'WALLET', createdAt: new Date(),
+    };
+
+    beforeEach(() => {
+      paymentCreate = vi.fn().mockResolvedValue(existingPayment);
+      paymentFindUnique = vi.fn().mockResolvedValue(null); // chưa có key
+
+      const transaction = {
+        payment: { findUnique: paymentFindUnique, create: paymentCreate },
+        order: {
+          findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PENDING' }),
+          update: vi.fn(),
+        },
+      } as unknown as Prisma.TransactionClient;
+
+      const prisma = {
+        $transaction: vi.fn((cb) => cb(transaction)),
+      } as unknown as PrismaService;
+
+      service = new OrdersService(prisma);
+    });
+
+    it('tạo payment mới khi idempotency-key chưa tồn tại', async () => {
+      const result = await service.pay(10, 'key-abc', { method: 'WALLET', amount: 70000 });
+      expect(paymentCreate).toHaveBeenCalledOnce();
+      expect(result.idempotent).toBe(false);
+    });
+
+    it('trả về payment cũ khi key đã tồn tại — KHÔNG tạo mới', async () => {
+      paymentFindUnique.mockResolvedValue(existingPayment); // key đã có
+
+      const result = await service.pay(10, 'key-abc', { method: 'WALLET', amount: 70000 });
+
+      expect(paymentCreate).not.toHaveBeenCalled(); // ← quan trọng nhất
+      expect(result.idempotent).toBe(true);
+      expect(result.payment.idempotencyKey).toBe('key-abc');
+    });
+  });
+
 });

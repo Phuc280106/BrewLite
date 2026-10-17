@@ -9,10 +9,11 @@ import {
   TOPPING_PRICE,
 } from '../options/options.constants.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
+import { PayOrderDto } from './dto/pay-order.dto.js';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async create(input: CreateOrderDto, userId?: number) {
     return this.prisma.$transaction(async (transaction) => {
@@ -82,4 +83,40 @@ export class OrdersService {
       };
     });
   }
+  async pay(orderId: number, idempotencyKey: string, dto: PayOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Kiểm tra idempotency: nếu key đã tồn tại → trả về Payment cũ luôn
+      const existing = await tx.payment.findUnique({
+        where: { idempotencyKey },
+      });
+      if (existing) {
+        return { idempotent: true, payment: existing };
+      }
+
+      // 2. Kiểm tra order tồn tại
+      const order = await tx.order.findUnique({ where: { id: orderId } });
+      if (!order) throw new NotFoundException(`Order ${orderId} not found`);
+      if (order.status !== 'PENDING') {
+        throw new BadRequestException(`Order is already ${order.status}`);
+      }
+
+      // 3. Tạo Payment và cập nhật status Order → PAID (atomic)
+      const payment = await tx.payment.create({
+        data: {
+          orderId,
+          idempotencyKey,
+          amount: dto.amount,
+          method: dto.method,
+        },
+      });
+
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: 'PAID' },
+      });
+
+      return { idempotent: false, payment };
+    });
+  }
+
 }
