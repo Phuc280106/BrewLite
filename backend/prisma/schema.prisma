@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String?
+  category    String?
+  price       Float
+  imageUrl    String
+  stock       Int
+  version     Int         @default(0) // Phục vụ Optimistic Locking (Task 10)
+  createdAt   DateTime    @default(now())
+
+  orderItems  OrderItem[]
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  passwordHash  String
+  name          String?
+  loyaltyPoints Int      @default(0) // Điểm thưởng tích lũy (Task 10)
+  createdAt     DateTime @default(now())
+
+  orders        Order[]
+}
+
+model Order {
+  id         Int         @id @default(autoincrement())
+  userId     Int?
+  user       User?       @relation(fields: [userId], references: [id])
+  total      Float
+  discount   Float       @default(0) // Số tiền giảm giá
+  couponCode String?     // Mã khuyến mãi đã áp dụng
+  status     String      @default("PENDING") // PENDING, PAID, PREPARING, READY, COMPLETED, CANCELLED, PAYMENT_FAILED
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  items      OrderItem[]
+  payments   Payment[]
+}
+
+model Promotion {
+  id              Int      @id @default(autoincrement())
+  code            String   @unique
+  description     String?
+  discountPercent Int?     // Giảm theo % (ví dụ: 10 = giảm 10%)
+  discountAmount  Float?   // Giảm theo tiền cố định (ví dụ: 20000 = giảm 20k)
+  minOrder        Float    @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+
+  size      String   // "S", "M", "L"
+  toppings  String?  // Danh sách topping, ví dụ: "Trân châu đen, Kem Macchiato"
+  price     Float    // Đơn giá tại thời điểm mua (đã gồm size + topping)
+  qty       Int      @default(1)
+  lineTotal Float
+
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id             Int      @id @default(autoincrement())
+  orderId        Int
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  idempotencyKey String   @unique // Chống trùng lặp giao dịch (Task 10)
+  amount         Float
+  method         String   // "WALLET", "CARD"
+  createdAt      DateTime @default(now())
+}
