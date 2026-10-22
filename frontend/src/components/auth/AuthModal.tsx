@@ -121,14 +121,14 @@ export default function AuthModal() {
         </div>
 
         {/* Tagline & Headlines */}
-        <div className="mt-6">
-          <span className="text-[10px] sm:text-[11px] font-bold tracking-[0.18em] text-stone-400 uppercase block">
-            A LITTLE COFFEE. A LITTLE CONNECTION.
+        <div className="mt-5">
+          <span className="text-[10px] sm:text-[11px] font-medium tracking-wider text-stone-400 uppercase block">
+            A little coffee. A little connection.
           </span>
-          <h2 className="text-3xl font-extrabold tracking-tight text-stone-900 mt-1.5">
+          <h2 className="text-2xl font-bold text-stone-800 mt-1.5 tracking-normal">
             {tab === 'login' ? 'Mừng bạn trở lại.' : 'Một khởi đầu thật thơm.'}
           </h2>
-          <p className="text-xs sm:text-sm text-stone-500 mt-1">
+          <p className="text-xs sm:text-sm text-stone-500 mt-1 font-normal">
             {tab === 'login'
               ? 'Cà phê ngon hơn khi có bạn ở đây.'
               : 'Gia nhập BrewLite, thêm vui mỗi ngày.'}

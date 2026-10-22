@@ -1,6 +1,8 @@
 'use client';
 
+import React, { useEffect, useState } from 'react';
 import { ProductItem, CartItemOptions } from '../../types';
+import { api, Product as ProductResponse } from '../../lib/api';
 import useProductOptions from './useProductOptions';
 import ProductOptions from './ProductOptions';
 
@@ -22,7 +24,7 @@ export default function ProductDetailModal({
   return (
     <ProductDetailDialog
       key={product.id}
-      product={product}
+      initialProduct={product}
       onClose={onClose}
       onAddToCart={onAddToCart}
     />
@@ -30,16 +32,50 @@ export default function ProductDetailModal({
 }
 
 interface ProductDetailDialogProps {
-  product: ProductItem;
+  initialProduct: ProductItem;
   onClose: () => void;
   onAddToCart: (options: CartItemOptions) => void;
 }
 
 function ProductDetailDialog({
-  product,
+  initialProduct,
   onClose,
   onAddToCart,
 }: ProductDetailDialogProps) {
+  const [product, setProduct] = useState<ProductItem>(initialProduct);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Gọi API GET /products/:id để lấy dữ liệu tồn kho và giá mới nhất từ CSDL
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchDetail() {
+      try {
+        setIsRefreshing(true);
+        const res = await api.get<ProductResponse>(`/products/${initialProduct.id}`);
+        if (res.data && isMounted) {
+          setProduct((prev) => ({
+            ...prev,
+            name: res.data.name || prev.name,
+            price: res.data.price ?? prev.price,
+            stock: res.data.stock ?? prev.stock,
+            note: res.data.description || prev.note,
+            image: res.data.imageUrl || prev.image,
+            category: res.data.category || prev.category,
+          }));
+        }
+      } catch (err) {
+        console.warn(`Lỗi lấy chi tiết sản phẩm ${initialProduct.id}:`, err);
+      } finally {
+        if (isMounted) setIsRefreshing(false);
+      }
+    }
+
+    void fetchDetail();
+    return () => {
+      isMounted = false;
+    };
+  }, [initialProduct.id]);
+
   const {
     sizes,
     toppings,
@@ -73,7 +109,7 @@ function ProductDetailDialog({
           />
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/80 backdrop-blur-md text-stone-700 flex items-center justify-center hover:bg-white transition-colors shadow-md"
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/80 backdrop-blur-md text-stone-700 flex items-center justify-center hover:bg-white transition-colors shadow-md cursor-pointer"
             aria-label="Đóng"
           >
             ✕
@@ -98,9 +134,20 @@ function ProductDetailDialog({
             <p className="text-xs text-stone-500 mt-1 leading-relaxed">
               {product.note}
             </p>
-            <p className="text-[11px] text-emerald-700 font-medium mt-1">
-              ● Còn lại: {product.stock} ly
-            </p>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span
+                className={`text-[11px] font-medium ${
+                  product.stock > 0 ? 'text-emerald-700' : 'text-rose-600'
+                }`}
+              >
+                ● {product.stock > 0 ? `Còn lại: ${product.stock} ly` : 'Tạm thời hết hàng'}
+              </span>
+              {isRefreshing && (
+                <span className="text-[10px] text-stone-400 italic">
+                  (đang cập nhật...)
+                </span>
+              )}
+            </div>
           </div>
 
           <hr className="border-stone-200" />
@@ -131,9 +178,12 @@ function ProductDetailDialog({
           <button
             type="button"
             onClick={confirm}
-            className="flex-1 py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-bold text-sm shadow-lg shadow-amber-500/25 transition-all text-center"
+            disabled={product.stock <= 0}
+            className="flex-1 py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-bold text-sm shadow-lg shadow-amber-500/25 transition-all text-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
-            Thêm vào giỏ hàng • {formatMoney(totalPrice)}
+            {product.stock <= 0
+              ? 'Hết hàng'
+              : `Thêm vào giỏ hàng • ${formatMoney(totalPrice)}`}
           </button>
         </div>
       </div>
