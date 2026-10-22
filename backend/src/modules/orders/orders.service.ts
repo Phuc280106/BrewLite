@@ -10,7 +10,7 @@ import {
 } from '../options/options.constants.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { PayOrderDto } from './dto/pay-order.dto.js';
-
+import { assertTransition, OrderStatus } from './order-state-machine.js';
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) { }
@@ -85,35 +85,38 @@ export class OrdersService {
   }
   async pay(orderId: number, idempotencyKey: string, dto: PayOrderDto) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Kiểm tra idempotency: nếu key đã tồn tại → trả về Payment cũ luôn
+      // 1. Kiểm tra idempotency: nếu key đã tồn tại → kiểm tra có đúng đơn hàng này không
       const existing = await tx.payment.findUnique({
         where: { idempotencyKey },
       });
       if (existing) {
+        if (existing.orderId !== orderId) {
+          throw new BadRequestException(
+            `Idempotency-Key "${idempotencyKey}" đã được sử dụng cho đơn hàng #${existing.orderId}, không thể dùng cho đơn hàng #${orderId}`
+          );
+        }
         return { idempotent: true, payment: existing };
       }
 
-      // 2. Kiểm tra order tồn tại
       const order = await tx.order.findUnique({ where: { id: orderId } });
       if (!order) throw new NotFoundException(`Order ${orderId} not found`);
-      if (order.status !== 'PENDING') {
-        throw new BadRequestException(`Order is already ${order.status}`);
-      }
+      assertTransition(order.status, OrderStatus.PAID);
 
-      // 3. Tạo Payment và cập nhật status Order → PAID (atomic)
+      // 3. Tạo Payment (tự động lấy đúng tổng tiền order.total) và cập nhật Order → PAID
       const payment = await tx.payment.create({
         data: {
           orderId,
           idempotencyKey,
-          amount: dto.amount,
+          amount: order.total,
           method: dto.method,
         },
       });
 
       await tx.order.update({
         where: { id: orderId },
-        data: { status: 'PAID' },
+        data: { status: OrderStatus.PAID },
       });
+
 
       return { idempotent: false, payment };
     });

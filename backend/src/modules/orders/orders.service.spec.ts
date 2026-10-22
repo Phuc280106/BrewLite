@@ -123,7 +123,7 @@ describe('OrdersService', () => {
       const transaction = {
         payment: { findUnique: paymentFindUnique, create: paymentCreate },
         order: {
-          findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PENDING' }),
+          findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PENDING', total: 70000 }),
           update: vi.fn(),
         },
       } as unknown as Prisma.TransactionClient;
@@ -136,20 +136,83 @@ describe('OrdersService', () => {
     });
 
     it('tạo payment mới khi idempotency-key chưa tồn tại', async () => {
-      const result = await service.pay(10, 'key-abc', { method: 'WALLET', amount: 70000 });
+      const result = await service.pay(10, 'key-abc', { method: 'WALLET' });
       expect(paymentCreate).toHaveBeenCalledOnce();
+      expect(paymentCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            amount: 70000,
+            method: 'WALLET',
+          }),
+        })
+      );
       expect(result.idempotent).toBe(false);
     });
 
     it('trả về payment cũ khi key đã tồn tại — KHÔNG tạo mới', async () => {
       paymentFindUnique.mockResolvedValue(existingPayment); // key đã có
 
-      const result = await service.pay(10, 'key-abc', { method: 'WALLET', amount: 70000 });
+      const result = await service.pay(10, 'key-abc', { method: 'WALLET' });
 
       expect(paymentCreate).not.toHaveBeenCalled(); // ← quan trọng nhất
       expect(result.idempotent).toBe(true);
       expect(result.payment.idempotencyKey).toBe('key-abc');
     });
+
+    it('chặn khi tái sử dụng idempotency-key cho một orderId khác', async () => {
+      paymentFindUnique.mockResolvedValue(existingPayment); // existingPayment có orderId: 10
+
+      // Thử thanh toán cho đơn hàng khác (orderId: 99) nhưng dùng lại key cũ của đơn 10
+      await expect(
+        service.pay(99, 'key-abc', { method: 'WALLET' })
+      ).rejects.toThrow('đã được sử dụng cho đơn hàng #10');
+    });
+
+    it('tự động lấy đúng số tiền từ order.total để tạo payment', async () => {
+      const result = await service.pay(10, 'key-auto-amount', { method: 'WALLET' });
+
+      expect(paymentCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            amount: 70000,
+          }),
+        })
+      );
+      expect(result.idempotent).toBe(false);
+    });
+
+    it('cho phép thanh toán khi đơn hàng đang ở trạng thái PAYMENT_FAILED (thử lại)', async () => {
+      // Giả lập đơn hàng lần trước bị lỗi (PAYMENT_FAILED)
+      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
+        return cb({
+          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
+          order: {
+            findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PAYMENT_FAILED', total: 70000 }),
+            update: vi.fn(),
+          },
+        } as any);
+      });
+
+      const result = await service.pay(10, 'key-retry', { method: 'WALLET' });
+      expect(result.idempotent).toBe(false);
+    });
+
+    it('chặn thanh toán khi đơn hàng ở trạng thái sai (ví dụ: CANCELLED hoặc COMPLETED)', async () => {
+      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
+        return cb({
+          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
+          order: {
+            findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'CANCELLED', total: 70000 }),
+            update: vi.fn(),
+          },
+        } as any);
+      });
+
+      await expect(
+        service.pay(10, 'key-invalid', { method: 'WALLET' })
+      ).rejects.toThrow();
+    });
+
   });
 
 });
