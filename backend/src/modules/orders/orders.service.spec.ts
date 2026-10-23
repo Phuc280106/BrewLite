@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../../database/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
+import { OrderStatus } from './order-state-machine.js';
 import { MAX_ORDER_ATTEMPTS, OrdersService } from './orders.service.js';
  
 describe('CreateOrderDto', () => {
@@ -217,6 +218,128 @@ describe('OrdersService', () => {
 
   });
 
+  describe('OrdersService.updateStatus – Order State Machine', () => {
+    let service: OrdersService;
+    let orderFindUnique: ReturnType<typeof vi.fn>;
+    let orderUpdate: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      orderFindUnique = vi.fn();
+      orderUpdate = vi.fn();
+      const prisma = {
+        order: {
+          findUnique: orderFindUnique,
+          update: orderUpdate,
+        },
+      } as unknown as PrismaService;
+
+      service = new OrdersService(prisma);
+    });
+
+    it('chuyển trạng thái hợp lệ tuần tự: PAID -> PREPARING -> READY -> COMPLETED', async () => {
+      orderFindUnique.mockResolvedValueOnce({ id: 10, status: OrderStatus.PAID });
+      orderUpdate.mockResolvedValueOnce({ id: 10, status: OrderStatus.PREPARING, items: [] });
+
+      const step1 = await service.updateStatus(10, OrderStatus.PREPARING);
+      expect(step1).toMatchObject({
+        id: 10,
+        orderCode: 'BL-000010',
+        status: OrderStatus.PREPARING,
+      });
+
+      orderFindUnique.mockResolvedValueOnce({ id: 10, status: OrderStatus.PREPARING });
+      orderUpdate.mockResolvedValueOnce({ id: 10, status: OrderStatus.READY, items: [] });
+
+      const step2 = await service.updateStatus(10, OrderStatus.READY);
+      expect(step2.status).toBe(OrderStatus.READY);
+
+      orderFindUnique.mockResolvedValueOnce({ id: 10, status: OrderStatus.READY });
+      orderUpdate.mockResolvedValueOnce({ id: 10, status: OrderStatus.COMPLETED, items: [] });
+
+      const step3 = await service.updateStatus(10, OrderStatus.COMPLETED);
+      expect(step3.status).toBe(OrderStatus.COMPLETED);
+    });
+
+    it('chặn chuyển trạng thái sai quy tắc (ví dụ: PENDING nhảy sang COMPLETED) và ném lỗi 400 BadRequestException', async () => {
+      orderFindUnique.mockResolvedValue({ id: 10, status: OrderStatus.PENDING });
+
+      await expect(
+        service.updateStatus(10, OrderStatus.COMPLETED)
+      ).rejects.toThrow(BadRequestException);
+      expect(orderUpdate).not.toHaveBeenCalled();
+    });
+
+    it('chặn chuyển tiếp từ trạng thái kết thúc (COMPLETED hoặc CANCELLED)', async () => {
+      orderFindUnique.mockResolvedValue({ id: 10, status: OrderStatus.COMPLETED });
+
+      await expect(
+        service.updateStatus(10, OrderStatus.CANCELLED)
+      ).rejects.toThrow(BadRequestException);
+      expect(orderUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ném NotFoundException nếu không tìm thấy đơn hàng', async () => {
+      orderFindUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus(999, OrderStatus.PREPARING)
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('OrdersService.findMyOrders – Lịch sử đơn hàng của user', () => {
+    it('trả về danh sách đơn hàng kèm món của user đang đăng nhập theo thứ tự mới nhất', async () => {
+      const mockOrders = [
+        {
+          id: 5,
+          userId: 1,
+          total: 85000,
+          status: OrderStatus.PAID,
+          createdAt: new Date('2026-10-22T10:00:00.000Z'),
+          items: [
+            {
+              id: 1,
+              productId: 12,
+              size: 'M',
+              qty: 2,
+              lineTotal: 85000,
+              product: {
+                id: 12,
+                name: 'Cappuccino',
+                imageUrl: '/images/cappuccino.jpg',
+                price: 45000,
+              },
+            },
+          ],
+        },
+      ];
+      const findMany = vi.fn().mockResolvedValue(mockOrders);
+      const prisma = {
+        order: { findMany },
+      } as unknown as PrismaService;
+
+      const service = new OrdersService(prisma);
+      const result = await service.findMyOrders(1);
+
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 1 },
+          orderBy: { createdAt: 'desc' },
+          include: expect.objectContaining({
+            items: expect.any(Object),
+          }),
+        })
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 5,
+        orderCode: 'BL-000005',
+        status: OrderStatus.PAID,
+        total: 85000,
+      });
+    });
+  });
+
 });
  
 describe('OrdersService - inventory control (transaction + optimistic locking)', () => {
@@ -396,5 +519,3 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
     expect(prisma.$transaction).toHaveBeenCalledTimes(MAX_ORDER_ATTEMPTS);
   });
 });
- 
-

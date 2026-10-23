@@ -216,4 +216,73 @@ export class OrdersService {
       return { idempotent: false, payment };
     });
   }
+
+  /**
+   * Cập nhật trạng thái đơn hàng theo Order State Machine (Task 10.1).
+   * Dùng `assertTransition` để chặn mọi chuyển tiếp trạng thái không hợp lệ (ném lỗi 400).
+   */
+  async updateStatus(orderId: number, newStatus: OrderStatus | string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    assertTransition(order.status, newStatus);
+
+    const updatedOrder = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: newStatus },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                imageUrl: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      ...updatedOrder,
+      orderCode: `BL-${String(updatedOrder.id).padStart(6, '0')}`,
+    };
+  }
+
+  /**
+   * Lấy danh sách lịch sử đơn hàng kèm món của user đang đăng nhập (US-09).
+   */
+  async findMyOrders(userId: number) {
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                imageUrl: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return orders.map((order) => ({
+      ...order,
+      orderCode: `BL-${String(order.id).padStart(6, '0')}`,
+    }));
+  }
 }
