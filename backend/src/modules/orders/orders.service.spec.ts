@@ -37,19 +37,57 @@ describe('CreateOrderDto', () => {
  
     await expect(validate(dto)).resolves.not.toHaveLength(0);
   });
+
+  it('accepts an optional valid string couponCode', async () => {
+    const dto = plainToInstance(CreateOrderDto, {
+      items: [
+        {
+          productId: 12,
+          size: 'M',
+          toppings: ['pearl'],
+          quantity: 2,
+        },
+      ],
+      couponCode: 'BREW10',
+    });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
+  });
+
+  it('rejects a non-string couponCode', async () => {
+    const dto = plainToInstance(CreateOrderDto, {
+      items: [
+        {
+          productId: 12,
+          size: 'M',
+          toppings: ['pearl'],
+          quantity: 2,
+        },
+      ],
+      couponCode: 12345,
+    });
+
+    await expect(validate(dto)).resolves.not.toHaveLength(0);
+  });
 });
  
 describe('OrdersService', () => {
   let service: OrdersService;
   let orderCreate: ReturnType<typeof vi.fn>;
- 
+  let promotionFindUnique: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
-    orderCreate = vi.fn().mockResolvedValue({
-      id: 22,
-      total: 70000,
-      status: 'PENDING',
-      createdAt: new Date('2026-10-14T00:00:00.000Z'),
-    });
+    orderCreate = vi.fn().mockImplementation(({ data }) =>
+      Promise.resolve({
+        id: 22,
+        total: data.total,
+        discount: data.discount ?? 0,
+        couponCode: data.couponCode ?? null,
+        status: data.status,
+        createdAt: new Date('2026-10-14T00:00:00.000Z'),
+      })
+    );
+    promotionFindUnique = vi.fn().mockResolvedValue(null);
     const transaction = {
       product: {
         findMany: vi.fn().mockResolvedValue([
@@ -57,6 +95,7 @@ describe('OrdersService', () => {
         ]),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
+      promotion: { findUnique: promotionFindUnique },
       order: { create: orderCreate },
     } as unknown as Prisma.TransactionClient;
     const prisma = {
@@ -65,7 +104,7 @@ describe('OrdersService', () => {
           callback(transaction)
       ),
     } as unknown as PrismaService;
- 
+
     service = new OrdersService(prisma);
   });
  
@@ -107,6 +146,138 @@ describe('OrdersService', () => {
       status: 'PENDING',
       total: 70000,
     });
+  });
+
+  it('áp dụng mã giảm giá theo phần trăm (BREW10: 10%) và trừ vào total', async () => {
+    promotionFindUnique.mockResolvedValue({
+      code: 'BREW10',
+      discountPercent: 10,
+      discountAmount: null,
+      minOrder: 50000,
+      isActive: true,
+    });
+
+    const result = await service.create(
+      plainToInstance(CreateOrderDto, {
+        items: [
+          { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
+        ],
+        couponCode: 'brew10',
+      })
+    );
+
+    // subtotal = 70.000đ, discount 10% = 7.000đ -> total = 63.000đ
+    expect(orderCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          total: 63000,
+          discount: 7000,
+          couponCode: 'BREW10',
+          status: 'PENDING',
+        }),
+      })
+    );
+    expect(result).toMatchObject({
+      orderId: 22,
+      total: 63000,
+      discount: 7000,
+      couponCode: 'BREW10',
+    });
+  });
+
+  it('áp dụng mã giảm giá theo số tiền cố định (CHAOBAN: 20.000đ) và trừ vào total', async () => {
+    promotionFindUnique.mockResolvedValue({
+      code: 'CHAOBAN',
+      discountPercent: null,
+      discountAmount: 20000,
+      minOrder: 40000,
+      isActive: true,
+    });
+
+    const result = await service.create(
+      plainToInstance(CreateOrderDto, {
+        items: [
+          { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
+        ],
+        couponCode: 'CHAOBAN',
+      })
+    );
+
+    // subtotal = 70.000đ, discount = 20.000đ -> total = 50.000đ
+    expect(orderCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          total: 50000,
+          discount: 20000,
+          couponCode: 'CHAOBAN',
+          status: 'PENDING',
+        }),
+      })
+    );
+    expect(result).toMatchObject({
+      orderId: 22,
+      total: 50000,
+      discount: 20000,
+      couponCode: 'CHAOBAN',
+    });
+  });
+
+  it('ném lỗi BadRequestException khi mã khuyến mãi không tồn tại', async () => {
+    promotionFindUnique.mockResolvedValue(null);
+
+    await expect(
+      service.create(
+        plainToInstance(CreateOrderDto, {
+          items: [
+            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
+          ],
+          couponCode: 'INVALID_CODE',
+        })
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('ném lỗi BadRequestException khi mã khuyến mãi đã bị vô hiệu hóa (isActive: false)', async () => {
+    promotionFindUnique.mockResolvedValue({
+      code: 'EXPIRED',
+      discountPercent: 10,
+      discountAmount: null,
+      minOrder: 10000,
+      isActive: false,
+    });
+
+    await expect(
+      service.create(
+        plainToInstance(CreateOrderDto, {
+          items: [
+            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
+          ],
+          couponCode: 'EXPIRED',
+        })
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('ném lỗi BadRequestException khi đơn hàng chưa đạt giá trị tối thiểu (minOrder)', async () => {
+    promotionFindUnique.mockResolvedValue({
+      code: 'VIP100',
+      discountPercent: 20,
+      discountAmount: null,
+      minOrder: 100000,
+      isActive: true,
+    });
+
+    // subtotal = 70.000đ < minOrder (100.000đ)
+    await expect(
+      service.create(
+        plainToInstance(CreateOrderDto, {
+          items: [
+            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
+          ],
+          couponCode: 'VIP100',
+        })
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
   describe('OrdersService.pay – idempotency', () => {
     let service: OrdersService;
@@ -215,6 +386,87 @@ describe('OrdersService', () => {
       ).rejects.toThrow();
     });
 
+  });
+
+  describe('OrdersService.pay – tích lũy điểm thưởng (loyalty points)', () => {
+    let service: OrdersService;
+    let userUpdate: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      userUpdate = vi.fn().mockResolvedValue({ id: 9, loyaltyPoints: 17 });
+
+      const transaction = {
+        payment: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          create: vi.fn().mockResolvedValue({ id: 1 }),
+        },
+        order: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: 10,
+            userId: 9,
+            status: 'PENDING',
+            total: 75000,
+          }),
+          update: vi.fn(),
+        },
+        user: { update: userUpdate },
+      } as unknown as Prisma.TransactionClient;
+
+      const prisma = {
+        $transaction: vi.fn((cb) => cb(transaction)),
+      } as unknown as PrismaService;
+
+      service = new OrdersService(prisma);
+    });
+
+    it('tự động tính điểm (10.000đ = 1 điểm) và cộng vào User.loyaltyPoints khi order có userId', async () => {
+      const result = await service.pay(10, 'key-loyalty', { method: 'WALLET' });
+
+      // 75.000đ / 10.000 = 7 điểm
+      expect(userUpdate).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: {
+          loyaltyPoints: {
+            increment: 7,
+          },
+        },
+      });
+      expect(result.loyaltyPointsEarned).toBe(7);
+    });
+
+    it('không cộng điểm khi đơn hàng không có userId (khách vãng lai)', async () => {
+      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
+        return cb({
+          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
+          order: {
+            findUnique: vi.fn().mockResolvedValue({ id: 10, userId: null, status: 'PENDING', total: 75000 }),
+            update: vi.fn(),
+          },
+          user: { update: userUpdate },
+        } as any);
+      });
+
+      const result = await service.pay(10, 'key-guest', { method: 'WALLET' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(result.loyaltyPointsEarned).toBe(7);
+    });
+
+    it('không gọi user.update nếu đơn hàng có tổng tiền dưới 10.000đ (0 điểm)', async () => {
+      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
+        return cb({
+          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
+          order: {
+            findUnique: vi.fn().mockResolvedValue({ id: 10, userId: 9, status: 'PENDING', total: 8000 }),
+            update: vi.fn(),
+          },
+          user: { update: userUpdate },
+        } as any);
+      });
+
+      const result = await service.pay(10, 'key-low-amount', { method: 'WALLET' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(result.loyaltyPointsEarned).toBe(0);
+    });
   });
 
 });
