@@ -3,8 +3,8 @@ import { Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PrismaService } from '../../database/prisma.service.js';
-import { CreateOrderDto } from './dto/create-order.dto.js';
+import { PrismaService } from '../database/prisma.service.js';
+import { CreateOrderDto } from '../dto/orders/create-order.dto.js';
 import { MAX_ORDER_ATTEMPTS, OrdersService } from './orders.service.js';
  
 describe('CreateOrderDto', () => {

@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaymentsController } from './payments.controller.js';
-import { OrdersService } from './orders.service.js';
+import { OrdersService } from '../services/orders.service.js';
 
 describe('PaymentsController', () => {
   let controller: PaymentsController;

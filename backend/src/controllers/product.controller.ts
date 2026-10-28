@@ -1,5 +1,5 @@
 import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
-import { ProductService } from './product.service.js';
+import { ProductService } from '../services/product.service.js';
 import { ApiTags, ApiOperation, ApiParam } from '@nestjs/swagger';
 
 @ApiTags('Products') 

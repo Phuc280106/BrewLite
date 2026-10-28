@@ -9,10 +9,10 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { AuthService } from './auth.service.js';
-import { RegisterDto } from './dto/register.dto.js';
-import { LoginDto } from './dto/login.dto.js';
-import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
+import { AuthService } from '../services/auth.service.js';
+import { RegisterDto } from '../dto/auth/register.dto.js';
+import { LoginDto } from '../dto/auth/login.dto.js';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 
 @ApiTags('Auth')
 @Controller('auth')

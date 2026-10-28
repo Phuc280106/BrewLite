@@ -9,9 +9,9 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
-import { CreatePaymentDto } from './dto/create-payment.dto.js';
-import { OrdersService } from './orders.service.js';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import { CreatePaymentDto } from '../dto/orders/create-payment.dto.js';
+import { OrdersService } from '../services/orders.service.js';
 
 @ApiTags('Payments')
 @Controller('payments')

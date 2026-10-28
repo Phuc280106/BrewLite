@@ -5,14 +5,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service.js';
+import { PrismaService } from '../database/prisma.service.js';
 import {
   SIZE_EXTRA_PRICE,
   TOPPING_PRICE,
-} from '../options/options.constants.js';
-import { CreateOrderDto } from './dto/create-order.dto.js';
-import { PayOrderDto } from './dto/pay-order.dto.js';
-import { assertTransition, OrderStatus } from './order-state-machine.js';
+} from '../common/constants/options.constants.js';
+import { CreateOrderDto } from '../dto/orders/create-order.dto.js';
+import { PayOrderDto } from '../dto/orders/pay-order.dto.js';
+import { assertTransition, OrderStatus } from '../common/state-machine/order-state-machine.js';
 
 /** Số lần thử lại tối đa khi có xung đột phiên bản (optimistic locking). */
 export const MAX_ORDER_ATTEMPTS = 5;

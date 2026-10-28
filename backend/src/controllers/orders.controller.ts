@@ -8,9 +8,9 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
-import { CreateOrderDto } from './dto/create-order.dto.js';
-import { OrdersService } from './orders.service.js';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import { CreateOrderDto } from '../dto/orders/create-order.dto.js';
+import { OrdersService } from '../services/orders.service.js';
 
 @ApiTags('Orders')
 @Controller('orders')

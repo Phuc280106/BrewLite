@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProductController } from './product.controller.js';
-import { ProductService } from './product.service.js';
+import { ProductService } from '../services/product.service.js';
 
 describe('ProductController', () => {
   let controller: ProductController;

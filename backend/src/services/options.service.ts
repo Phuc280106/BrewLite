@@ -4,7 +4,7 @@ import {
   PRODUCT_TOPPINGS,
   SIZE_EXTRA_PRICE,
   TOPPING_PRICE,
-} from './options.constants.js';
+} from '../common/constants/options.constants.js';
 
 @Injectable()
 export class OptionsService {

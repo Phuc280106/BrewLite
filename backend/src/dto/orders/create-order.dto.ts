@@ -12,8 +12,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   ALLOWED_SIZE_IDS,
   ALLOWED_TOPPING_IDS,
-} from '../../options/options.constants.js';
-import type { ProductSizeId } from '../../options/options.constants.js';
+} from '../../common/constants/options.constants.js';
+import type { ProductSizeId } from '../../common/constants/options.constants.js';
 
 export class CreateOrderItemDto {
   @ApiProperty({ example: 12 })

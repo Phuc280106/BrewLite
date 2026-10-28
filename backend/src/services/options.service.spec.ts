@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OptionsService } from './options.service.js';
-import { PRODUCT_SIZES, PRODUCT_TOPPINGS } from './options.constants.js';
+import { PRODUCT_SIZES, PRODUCT_TOPPINGS } from '../common/constants/options.constants.js';
 
 describe('OptionsService', () => {
   const service = new OptionsService();
