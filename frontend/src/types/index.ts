@@ -96,7 +96,39 @@ export interface ValidatePromotionResponse {
   finalTotal: number;
 }
 
-export type PaymentMethod = 'MOMO' | 'VNPAY' | 'CARD';
+export type PaymentMethod = 'VIETQR' | 'MOMO' | 'VNPAY' | 'CARD';
+
+export interface PaymentIntent {
+  orderId: number;
+  orderCode: string;
+  amount: number;
+  transactionRef: string;
+  qrCodeUrl: string;
+  bankInfo: {
+    bankName: string;
+    accountNo: string;
+    accountName: string;
+  };
+  expiresAt: string;
+}
+
+export interface InitiatePaymentResponse {
+  orderId: number;
+  orderCode: string;
+  total: number;
+  method: string;
+  paymentIntent: PaymentIntent;
+}
+
+export interface OrderStatusResponse {
+  orderId: number;
+  orderCode: string;
+  status: string;
+  total: number;
+  discount: number;
+  couponCode: string | null;
+  updatedAt: string;
+}
 
 export interface PaymentResponse {
   idempotent: boolean;

@@ -108,25 +108,33 @@ describe('OrdersService', () => {
       total: 70000,
     });
   });
-  describe('OrdersService.pay – idempotency', () => {
+  describe('OrdersService.processPaymentWebhook – webhook idempotency & state machine', () => {
     let service: OrdersService;
     let paymentCreate: ReturnType<typeof vi.fn>;
     let paymentFindUnique: ReturnType<typeof vi.fn>;
+    let orderFindUnique: ReturnType<typeof vi.fn>;
+    let orderUpdate: ReturnType<typeof vi.fn>;
 
     const existingPayment = {
-      id: 1, orderId: 10, idempotencyKey: 'key-abc',
-      amount: 70000, method: 'WALLET', createdAt: new Date(),
+      id: 1,
+      orderId: 10,
+      idempotencyKey: 'TXN_TEST_123',
+      amount: 70000,
+      method: 'WALLET',
+      createdAt: new Date(),
     };
 
     beforeEach(() => {
       paymentCreate = vi.fn().mockResolvedValue(existingPayment);
-      paymentFindUnique = vi.fn().mockResolvedValue(null); // chưa có key
+      paymentFindUnique = vi.fn().mockResolvedValue(null);
+      orderFindUnique = vi.fn().mockResolvedValue({ id: 10, status: 'PENDING', total: 70000 });
+      orderUpdate = vi.fn().mockResolvedValue({ id: 10, status: 'PAID' });
 
       const transaction = {
         payment: { findUnique: paymentFindUnique, create: paymentCreate },
         order: {
-          findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PENDING', total: 70000 }),
-          update: vi.fn(),
+          findUnique: orderFindUnique,
+          update: orderUpdate,
         },
       } as unknown as Prisma.TransactionClient;
 
@@ -137,88 +145,124 @@ describe('OrdersService', () => {
       service = new OrdersService(prisma);
     });
 
-    it('tạo payment mới khi idempotency-key chưa tồn tại', async () => {
-      const result = await service.pay(10, 'key-abc', { method: 'WALLET' });
+    it('tạo payment mới và đổi order sang PAID khi webhook thành công và transactionRef chưa tồn tại', async () => {
+      const result = await service.processPaymentWebhook({
+        transactionRef: 'TXN_NEW_001',
+        orderId: 10,
+        amount: 70000,
+        status: 'SUCCESS',
+      });
+
       expect(paymentCreate).toHaveBeenCalledOnce();
       expect(paymentCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            orderId: 10,
             amount: 70000,
-            method: 'WALLET',
+            idempotencyKey: 'TXN_NEW_001',
           }),
         })
       );
-      expect(result.idempotent).toBe(false);
-    });
-
-    it('trả về payment cũ khi key đã tồn tại — KHÔNG tạo mới', async () => {
-      paymentFindUnique.mockResolvedValue(existingPayment); // key đã có
-
-      const result = await service.pay(10, 'key-abc', { method: 'WALLET' });
-
-      expect(paymentCreate).not.toHaveBeenCalled(); // ← quan trọng nhất
-      expect(result.idempotent).toBe(true);
-      expect(result.payment.idempotencyKey).toBe('key-abc');
-    });
-
-    it('chặn khi tái sử dụng idempotency-key cho một orderId khác', async () => {
-      paymentFindUnique.mockResolvedValue(existingPayment); // existingPayment có orderId: 10
-
-      // Thử thanh toán cho đơn hàng khác (orderId: 99) nhưng dùng lại key cũ của đơn 10
-      await expect(
-        service.pay(99, 'key-abc', { method: 'WALLET' })
-      ).rejects.toThrow('đã được sử dụng cho đơn hàng #10');
-    });
-
-    it('tự động lấy đúng số tiền từ order.total để tạo payment', async () => {
-      const result = await service.pay(10, 'key-auto-amount', { method: 'WALLET' });
-
-      expect(paymentCreate).toHaveBeenCalledWith(
+      expect(orderUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            amount: 70000,
-          }),
+          where: { id: 10 },
+          data: { status: 'PAID' },
         })
       );
-      expect(result.idempotent).toBe(false);
+      expect(result).toMatchObject({
+        idempotent: false,
+        success: true,
+        orderId: 10,
+        status: 'PAID',
+      });
     });
 
-    it('cho phép thanh toán khi đơn hàng đang ở trạng thái PAYMENT_FAILED (thử lại)', async () => {
-      // Giả lập đơn hàng lần trước bị lỗi (PAYMENT_FAILED)
-      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
-        return cb({
-          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
-          order: {
-            findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'PAYMENT_FAILED', total: 70000 }),
-            update: vi.fn(),
-          },
-        } as any);
+    it('trả về idempotent: true khi transactionRef đã tồn tại — KHÔNG tạo mới payment', async () => {
+      paymentFindUnique.mockResolvedValue(existingPayment);
+
+      const result = await service.processPaymentWebhook({
+        transactionRef: 'TXN_TEST_123',
+        orderId: 10,
+        amount: 70000,
+        status: 'SUCCESS',
       });
 
-      const result = await service.pay(10, 'key-retry', { method: 'WALLET' });
-      expect(result.idempotent).toBe(false);
+      expect(paymentCreate).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        idempotent: true,
+        success: true,
+        orderId: 10,
+        status: 'PAID',
+      });
     });
 
-    it('chặn thanh toán khi đơn hàng ở trạng thái sai (ví dụ: CANCELLED hoặc COMPLETED)', async () => {
-      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
-        return cb({
-          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
-          order: {
-            findUnique: vi.fn().mockResolvedValue({ id: 10, status: 'CANCELLED', total: 70000 }),
-            update: vi.fn(),
-          },
-        } as any);
+    it('bỏ qua và trả về idempotent: true nếu đơn hàng đã ở trạng thái PAID', async () => {
+      orderFindUnique.mockResolvedValue({ id: 10, status: 'PAID', total: 70000 });
+
+      const result = await service.processPaymentWebhook({
+        transactionRef: 'TXN_ANOTHER_456',
+        orderId: 10,
+        amount: 70000,
+        status: 'SUCCESS',
       });
+
+      expect(paymentCreate).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        idempotent: true,
+        success: true,
+        orderId: 10,
+        status: 'PAID',
+      });
+    });
+
+    it('từ chối (BadRequestException) khi số tiền khách chuyển không khớp với order.total', async () => {
+      await expect(
+        service.processPaymentWebhook({
+          transactionRef: 'TXN_FRAUD_999',
+          orderId: 10,
+          amount: 1000,
+          status: 'SUCCESS',
+        })
+      ).rejects.toThrow('không khớp');
+    });
+
+    it('cập nhật PAYMENT_FAILED khi ngân hàng gửi status không phải SUCCESS', async () => {
+      const result = await service.processPaymentWebhook({
+        transactionRef: 'TXN_FAIL_001',
+        orderId: 10,
+        amount: 70000,
+        status: 'FAILED',
+      });
+
+      expect(paymentCreate).not.toHaveBeenCalled();
+      expect(orderUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 10 },
+          data: { status: 'PAYMENT_FAILED' },
+        })
+      );
+      expect(result).toMatchObject({
+        idempotent: false,
+        success: false,
+        status: 'PAYMENT_FAILED',
+      });
+    });
+
+    it('chặn thanh toán khi đơn hàng ở trạng thái sai (ví dụ: CANCELLED)', async () => {
+      orderFindUnique.mockResolvedValue({ id: 10, status: 'CANCELLED', total: 70000 });
 
       await expect(
-        service.pay(10, 'key-invalid', { method: 'WALLET' })
+        service.processPaymentWebhook({
+          transactionRef: 'TXN_INVALID_STATE',
+          orderId: 10,
+          amount: 70000,
+          status: 'SUCCESS',
+        })
       ).rejects.toThrow();
     });
-
   });
-
 });
- 
+
 describe('OrdersService - inventory control (transaction + optimistic locking)', () => {
   type FakeProduct = { id: number; stock: number; price: number; version: number };
  

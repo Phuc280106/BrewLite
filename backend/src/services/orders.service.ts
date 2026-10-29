@@ -11,7 +11,6 @@ import {
   TOPPING_PRICE,
 } from '../common/constants/options.constants.js';
 import { CreateOrderDto } from '../dto/orders/create-order.dto.js';
-import { PayOrderDto } from '../dto/orders/pay-order.dto.js';
 import { assertTransition, OrderStatus } from '../common/state-machine/order-state-machine.js';
 
 /** Số lần thử lại tối đa khi có xung đột phiên bản (optimistic locking). */
@@ -213,57 +212,6 @@ export class OrdersService {
     });
   }
 
-  async pay(orderId: number, idempotencyKey: string, dto: PayOrderDto) {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Kiểm tra idempotency: nếu key đã tồn tại → kiểm tra có đúng đơn hàng này không
-      const existing = await tx.payment.findUnique({
-        where: { idempotencyKey },
-      });
-      if (existing) {
-        if (existing.orderId !== orderId) {
-          throw new BadRequestException(
-            `Idempotency-Key "${idempotencyKey}" đã được sử dụng cho đơn hàng #${existing.orderId}, không thể dùng cho đơn hàng #${orderId}`
-          );
-        }
-        return { idempotent: true, payment: existing };
-      }
-
-      const order = await tx.order.findUnique({ where: { id: orderId } });
-      if (!order) throw new NotFoundException(`Order ${orderId} not found`);
-      assertTransition(order.status, OrderStatus.PAID);
-
-      // 3. Tạo Payment (tự động lấy đúng tổng tiền order.total) và cập nhật Order → PAID
-      const payment = await tx.payment.create({
-        data: {
-          orderId,
-          idempotencyKey,
-          amount: order.total,
-          method: dto.method,
-        },
-      });
-
-      await tx.order.update({
-        where: { id: orderId },
-        data: { status: OrderStatus.PAID },
-      });
-
-      // Tự động tích lũy điểm thưởng: 10.000đ = 1 điểm
-      const loyaltyPointsEarned = Math.floor(order.total / 10000);
-      if (order.userId && loyaltyPointsEarned > 0) {
-        await tx.user.update({
-          where: { id: order.userId },
-          data: {
-            loyaltyPoints: {
-              increment: loyaltyPointsEarned,
-            },
-          },
-        });
-      }
-
-      return { idempotent: false, payment, loyaltyPointsEarned };
-    });
-  }
-
   /**
    * Lấy danh sách các mã khuyến mãi đang hoạt động (Public).
    */
@@ -311,6 +259,150 @@ export class OrdersService {
       discountPercent: promotion.discountPercent,
       discountAmount: promotion.discountAmount,
       finalTotal: Math.max(0, subtotal - discount),
+    };
+  }
+
+  /**
+   * Xử lý Webhook từ Ngân hàng / Cổng thanh toán
+   * (DUY NHẤT nơi này có thẩm quyền chuyển trạng thái đơn hàng sang PAID)
+   */
+  async processPaymentWebhook(dto: {
+    transactionRef: string;
+    orderId: number;
+    amount: number;
+    status: string;
+    message?: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Chống lặp (Idempotency theo mã giao dịch ngân hàng)
+      const existingPayment = await tx.payment.findUnique({
+        where: { idempotencyKey: dto.transactionRef },
+      });
+      if (existingPayment) {
+        this.logger.log(`[Webhook Idempotent] Giao dịch ${dto.transactionRef} đã được xử lý.`);
+        return {
+          idempotent: true,
+          success: true,
+          orderId: existingPayment.orderId,
+          status: OrderStatus.PAID,
+        };
+      }
+
+      // 2. Kiểm tra đơn hàng có tồn tại không
+      const order = await tx.order.findUnique({
+        where: { id: dto.orderId },
+      });
+
+      if (!order) {
+        throw new NotFoundException(`Không tìm thấy đơn hàng #${dto.orderId}`);
+      }
+
+      // 3. Nếu đơn đã PAID rồi thì bỏ qua không xử lý lại (Idempotency order-level)
+      if (order.status === OrderStatus.PAID) {
+        this.logger.log(`[Webhook] Đơn hàng #${dto.orderId} đã ở trạng thái PAID.`);
+        return {
+          idempotent: true,
+          success: true,
+          orderId: order.id,
+          status: OrderStatus.PAID,
+        };
+      }
+
+      // 4. Kiểm tra Finite State Machine
+      assertTransition(
+        order.status as OrderStatus,
+        dto.status === 'SUCCESS' ? OrderStatus.PAID : OrderStatus.PAYMENT_FAILED
+      );
+
+      // 5. Đối soát số tiền: Khách thực chuyển có khớp với giá trị đơn hàng không?
+      if (Math.abs(dto.amount - order.total) > 1) {
+        this.logger.error(
+          `[Webhook] Sai lệch tiền! Đơn hàng: ${order.total}đ, Ngân hàng báo: ${dto.amount}đ`
+        );
+        throw new BadRequestException('Số tiền thanh toán từ ngân hàng không khớp với giá trị đơn');
+      }
+
+      // 6. Xử lý khi ngân hàng báo giao dịch THẤT BẠI
+      if (dto.status !== 'SUCCESS') {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: OrderStatus.PAYMENT_FAILED },
+        });
+        return {
+          idempotent: false,
+          success: false,
+          status: OrderStatus.PAYMENT_FAILED,
+          message: 'Giao dịch ngân hàng không thành công',
+        };
+      }
+
+      // 7. Giao dịch THÀNH CÔNG: Lưu Payment transaction và Cập nhật Order -> PAID
+      const payment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          idempotencyKey: dto.transactionRef,
+          amount: dto.amount,
+          method: 'WALLET',
+        },
+      });
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: { status: OrderStatus.PAID },
+      });
+
+      // 8. Tích lũy điểm thưởng loyalty (10.000đ = 1 điểm)
+      const loyaltyPointsEarned = Math.floor(order.total / 10000);
+      if (order.userId && loyaltyPointsEarned > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            loyaltyPoints: { increment: loyaltyPointsEarned },
+          },
+        });
+      }
+
+      this.logger.log(`[Webhook] Đơn hàng #${order.id} đã chuyển trạng thái PENDING -> PAID thành công!`);
+
+      return {
+        idempotent: false,
+        success: true,
+        orderId: order.id,
+        status: OrderStatus.PAID,
+        paymentId: payment.id,
+        loyaltyPointsEarned,
+      };
+    });
+  }
+
+  /**
+   * Lấy trạng thái hiện tại của đơn hàng (phục vụ client Polling)
+   */
+  async getOrderStatus(orderId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        status: true,
+        total: true,
+        discount: true,
+        couponCode: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng #${orderId}`);
+    }
+
+    return {
+      orderId: order.id,
+      orderCode: `BL-${String(order.id).padStart(6, '0')}`,
+      status: order.status,
+      total: order.total,
+      discount: order.discount,
+      couponCode: order.couponCode,
+      updatedAt: order.updatedAt,
     };
   }
 }
