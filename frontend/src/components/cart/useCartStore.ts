@@ -11,6 +11,7 @@ interface CartStore {
   addToCart: (options: CartItemOptions) => void;
   updateQuantity: (cartItemId: string, change: number) => void;
   completeCheckout: () => void;
+  clearCart: () => void;
 }
 
 interface PersistedCartState {
@@ -82,6 +83,7 @@ export const useCartStore = create<CartStore>()(
             .filter((item): item is CartItem => item !== null),
         })),
       completeCheckout: () => set({ ordered: true, cart: [] }),
+      clearCart: () => set({ cart: [] }),
     }),
     {
       name: 'brewlite-cart',

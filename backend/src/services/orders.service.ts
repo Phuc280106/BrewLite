@@ -52,11 +52,6 @@ export class OrdersService {
 
   /**
    * Tạo đơn hàng PENDING và giữ chỗ (trừ) tồn kho một cách nguyên tử.
-   *
-   * Khi nhiều khách đặt cùng lúc: mỗi lần thử là một transaction độc lập; nếu
-   * có người khác vừa mua mất hàng (version đổi) thì rollback, đọc lại tồn kho
-   * mới nhất và thử lại. Nếu lúc đó hết hàng thật -> 400, nếu tranh chấp quá
-   * nhiều -> 409.
    */
   async create(input: CreateOrderDto, userId?: number) {
     for (let attempt = 1; attempt <= MAX_ORDER_ATTEMPTS; attempt++) {
@@ -64,7 +59,7 @@ export class OrdersService {
         return await this.createOnce(input, userId);
       } catch (error) {
         if (!isRetryable(error)) throw error;
- 
+
         if (attempt < MAX_ORDER_ATTEMPTS) {
           this.logger.debug(
             `Order attempt ${attempt}/${MAX_ORDER_ATTEMPTS} hit a write conflict, retrying`
@@ -77,12 +72,12 @@ export class OrdersService {
         }
       }
     }
- 
+
     throw new ConflictException(
       'Too many concurrent orders for these products, please try again'
     );
   }
- 
+
   private createOnce(input: CreateOrderDto, userId?: number) {
     return this.prisma.$transaction(async (transaction) => {
       const productIds = [...new Set(input.items.map((item) => item.productId))];
@@ -90,20 +85,20 @@ export class OrdersService {
         where: { id: { in: productIds } },
       });
       const productsById = new Map(products.map((product) => [product.id, product]));
- 
+
       const requestedQuantityByProductId = new Map<number, number>();
       for (const item of input.items) {
         const product = productsById.get(item.productId);
         if (!product) {
           throw new NotFoundException(`Product ${item.productId} was not found`);
         }
- 
+
         requestedQuantityByProductId.set(
           item.productId,
           (requestedQuantityByProductId.get(item.productId) ?? 0) + item.quantity
         );
       }
- 
+
       // Kiểm tra sớm để trả lỗi rõ ràng (hết hàng thật, không phải tranh chấp).
       for (const [productId, quantity] of requestedQuantityByProductId) {
         const product = productsById.get(productId)!;
@@ -113,11 +108,8 @@ export class OrdersService {
           );
         }
       }
- 
-      // Optimistic locking: chỉ trừ kho nếu version vẫn là giá trị vừa đọc.
-      // `stock >= quantity` là lớp bảo vệ thứ hai, không bao giờ để kho âm.
-      // Sắp xếp theo id để mọi transaction khoá hàng theo cùng thứ tự
-      // (tránh deadlock khi 2 đơn có cùng nhiều sản phẩm).
+
+      // Optimistic locking
       const sortedRequests = [...requestedQuantityByProductId].sort(
         ([a], [b]) => a - b
       );
@@ -134,12 +126,12 @@ export class OrdersService {
             version: { increment: 1 },
           },
         });
- 
+
         if (count === 0) {
           throw new StockVersionConflictError(productId);
         }
       }
- 
+
       const orderItems = input.items.map((item) => {
         const product = productsById.get(item.productId)!;
         const toppingsPrice = item.toppings.reduce(
@@ -147,7 +139,7 @@ export class OrdersService {
           0
         );
         const price = product.price + SIZE_EXTRA_PRICE[item.size] + toppingsPrice;
- 
+
         return {
           productId: item.productId,
           size: item.size,
@@ -157,27 +149,70 @@ export class OrdersService {
           lineTotal: price * item.quantity,
         };
       });
-      const total = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
- 
+      const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+
+      let discount = 0;
+      let appliedCouponCode: string | null = null;
+
+      if (input.couponCode && input.couponCode.trim()) {
+        const normalizedCode = input.couponCode.trim().toUpperCase();
+        const promotion = await transaction.promotion.findUnique({
+          where: { code: normalizedCode },
+        });
+
+        if (!promotion || !promotion.isActive) {
+          throw new BadRequestException('Mã khuyến mãi không hợp lệ hoặc đã hết hạn');
+        }
+
+        if (subtotal < promotion.minOrder) {
+          throw new BadRequestException(
+            `Đơn hàng chưa đạt giá trị tối thiểu ${promotion.minOrder.toLocaleString('vi-VN')}đ để áp dụng mã khuyến mãi này`
+          );
+        }
+
+        if (promotion.discountPercent != null) {
+          discount = (subtotal * promotion.discountPercent) / 100;
+        } else if (promotion.discountAmount != null) {
+          discount = promotion.discountAmount;
+        }
+
+        discount = Math.min(discount, subtotal);
+        appliedCouponCode = promotion.code;
+      }
+
+      const total = Math.max(0, subtotal - discount);
+
       const order = await transaction.order.create({
         data: {
           userId: userId ?? null,
           total,
+          discount,
+          couponCode: appliedCouponCode,
           status: 'PENDING',
           items: { create: orderItems },
         },
-        select: { id: true, total: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          total: true,
+          discount: true,
+          couponCode: true,
+          status: true,
+          createdAt: true,
+        },
       });
- 
+
       return {
         orderId: order.id,
         orderCode: `BL-${String(order.id).padStart(6, '0')}`,
         total: order.total,
+        discount: order.discount,
+        couponCode: order.couponCode,
         status: order.status,
         createdAt: order.createdAt,
       };
     });
   }
+
   async pay(orderId: number, idempotencyKey: string, dto: PayOrderDto) {
     return this.prisma.$transaction(async (tx) => {
       // 1. Kiểm tra idempotency: nếu key đã tồn tại → kiểm tra có đúng đơn hàng này không
@@ -212,8 +247,70 @@ export class OrdersService {
         data: { status: OrderStatus.PAID },
       });
 
+      // Tự động tích lũy điểm thưởng: 10.000đ = 1 điểm
+      const loyaltyPointsEarned = Math.floor(order.total / 10000);
+      if (order.userId && loyaltyPointsEarned > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            loyaltyPoints: {
+              increment: loyaltyPointsEarned,
+            },
+          },
+        });
+      }
 
-      return { idempotent: false, payment };
+      return { idempotent: false, payment, loyaltyPointsEarned };
     });
+  }
+
+  /**
+   * Lấy danh sách các mã khuyến mãi đang hoạt động (Public).
+   */
+  async getPromotions() {
+    return this.prisma.promotion.findMany({
+      where: { isActive: true },
+      orderBy: { minOrder: 'asc' },
+    });
+  }
+
+  /**
+   * Kiểm tra và tính toán giảm giá thử trước khi tạo đơn (Promotion preview/validation).
+   */
+  async validatePromotion(code: string, subtotal: number) {
+    if (!code || !code.trim()) {
+      throw new BadRequestException('Vui lòng nhập mã khuyến mãi');
+    }
+    const normalizedCode = code.trim().toUpperCase();
+    const promotion = await this.prisma.promotion.findUnique({
+      where: { code: normalizedCode },
+    });
+
+    if (!promotion || !promotion.isActive) {
+      throw new BadRequestException('Mã khuyến mãi không tồn tại hoặc đã hết hạn');
+    }
+
+    if (subtotal < promotion.minOrder) {
+      throw new BadRequestException(
+        `Đơn hàng cần đạt tối thiểu ${promotion.minOrder.toLocaleString('vi-VN')} ₫ để áp dụng mã này`
+      );
+    }
+
+    let discount = 0;
+    if (promotion.discountPercent != null) {
+      discount = (subtotal * promotion.discountPercent) / 100;
+    } else if (promotion.discountAmount != null) {
+      discount = promotion.discountAmount;
+    }
+    discount = Math.min(discount, subtotal);
+
+    return {
+      code: promotion.code,
+      description: promotion.description,
+      discount,
+      discountPercent: promotion.discountPercent,
+      discountAmount: promotion.discountAmount,
+      finalTotal: Math.max(0, subtotal - discount),
+    };
   }
 }

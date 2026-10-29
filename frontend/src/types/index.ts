@@ -71,8 +71,44 @@ export interface CreateOrderResponse {
   orderId: number;
   orderCode: string;
   total: number;
+  discount?: number;
+  couponCode?: string | null;
   status: string;
   createdAt: string;
+}
+
+export interface Promotion {
+  id: number;
+  code: string;
+  description: string | null;
+  discountPercent: number | null;
+  discountAmount: number | null;
+  minOrder: number;
+  isActive: boolean;
+}
+
+export interface ValidatePromotionResponse {
+  code: string;
+  description: string | null;
+  discount: number;
+  discountPercent: number | null;
+  discountAmount: number | null;
+  finalTotal: number;
+}
+
+export type PaymentMethod = 'MOMO' | 'VNPAY' | 'CARD';
+
+export interface PaymentResponse {
+  idempotent: boolean;
+  payment: {
+    id: number;
+    orderId: number;
+    amount: number;
+    method: 'WALLET' | 'CARD';
+    idempotencyKey: string;
+    createdAt: string;
+  };
+  loyaltyPointsEarned?: number;
 }
 
 export type IconName =
