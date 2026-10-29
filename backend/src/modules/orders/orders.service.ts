@@ -339,4 +339,32 @@ export class OrdersService {
       orderCode: `BL-${String(order.id).padStart(6, '0')}`,
     }));
   }
+
+  /**
+   * Lấy toàn bộ danh sách đơn hàng kèm món (dành cho Barista / Nhân viên).
+   */
+  async findAll() {
+    const orders = await this.prisma.order.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                imageUrl: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return orders.map((order) => ({
+      ...order,
+      orderCode: `BL-${String(order.id).padStart(6, '0')}`,
+    }));
+  }
 }

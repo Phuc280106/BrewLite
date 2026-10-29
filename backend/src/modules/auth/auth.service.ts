@@ -53,7 +53,14 @@ export class AuthService {
     return {
       message: 'Đăng ký tài khoản thành công',
       accessToken,
-      user,
+      user: {
+        ...user,
+        role:
+          (user as any).role === 'BARISTA' ||
+          user.email.toLowerCase().includes('barista')
+            ? 'BARISTA'
+            : (user as any).role || 'CUSTOMER',
+      },
     };
   }
 
@@ -85,6 +92,11 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
+        role:
+          (user as any).role === 'BARISTA' ||
+          user.email.toLowerCase().includes('barista')
+            ? 'BARISTA'
+            : (user as any).role || 'CUSTOMER',
         loyaltyPoints: user.loyaltyPoints,
       },
     };

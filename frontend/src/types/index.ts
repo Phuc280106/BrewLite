@@ -30,10 +30,13 @@ export interface ProductOptionsResponse {
   toppingPrice?: Record<string, number>;
 }
 
+export type UserRole = 'CUSTOMER' | 'BARISTA' | 'STAFF' | string;
+
 export interface UserProfile {
   id: number;
   email: string;
   name: string | null;
+  role?: UserRole;
   loyaltyPoints: number;
 }
 
@@ -75,6 +78,45 @@ export interface CreateOrderResponse {
   couponCode?: string | null;
   status: string;
   createdAt: string;
+}
+
+export type OrderStatus =
+  | 'PENDING'
+  | 'PAID'
+  | 'PREPARING'
+  | 'READY'
+  | 'COMPLETED'
+  | 'PAYMENT_FAILED'
+  | 'CANCELLED';
+
+export interface OrderItemProduct {
+  id: number;
+  name: string;
+  imageUrl?: string;
+  price: number;
+}
+
+export interface OrderItemDetail {
+  id: number;
+  orderId?: number;
+  productId: number;
+  size: 'S' | 'M' | 'L' | string;
+  toppings: string | string[] | null;
+  price: number;
+  qty: number;
+  lineTotal: number;
+  product?: OrderItemProduct;
+}
+
+export interface OrderDetail {
+  id: number;
+  orderCode: string;
+  userId?: number | null;
+  total: number;
+  status: OrderStatus | string;
+  createdAt: string;
+  updatedAt?: string;
+  items: OrderItemDetail[];
 }
 
 export type IconName =

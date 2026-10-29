@@ -3,6 +3,7 @@
 import React from 'react';
 import { CartItem, CheckoutError } from '../../types';
 import Icon from '../common/Icon';
+import { useViewStore } from '../../store/useViewStore';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -11,10 +12,12 @@ interface CartDrawerProps {
   ordered: boolean;
   isSubmitting: boolean;
   orderCode: string | null;
+  orderStatus?: string | null;
   checkoutError: CheckoutError | null;
   onClose: () => void;
   onUpdateQuantity: (cartItemId: string, change: number) => void;
   onCheckout: () => void;
+  formatPrice?: (price: number) => string;
 }
 
 export default function CartDrawer({
@@ -24,14 +27,16 @@ export default function CartDrawer({
   ordered,
   isSubmitting,
   orderCode,
+  orderStatus,
   checkoutError,
   onClose,
   onUpdateQuantity,
   onCheckout,
+  formatPrice = (val: number) => `${val.toLocaleString('vi-VN')} ₫`,
 }: CartDrawerProps) {
   if (!isOpen) return null;
 
-  const formatMoney = (val: number) => `${val.toLocaleString('vi-VN')} ₫`;
+  const setCurrentView = useViewStore((state) => state.setCurrentView);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -43,7 +48,7 @@ export default function CartDrawer({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-heading">
-          <h2>Your coffee bag</h2>
+          <h2>{ordered ? 'Xác nhận đơn hàng' : 'Your coffee bag'}</h2>
           <button
             className="icon-button"
             aria-label="Đóng giỏ hàng"
@@ -55,15 +60,58 @@ export default function CartDrawer({
 
         {ordered ? (
           <div className="empty-state">
-            <span className="empty-icon">
+            <span className="empty-icon bg-emerald-100 text-emerald-600">
               <Icon name="check" size={40} />
             </span>
-            <h3>Order received!</h3>
-            <p>
-              Mã đơn hàng của bạn: <strong>{orderCode}</strong>
-              <br />
-              Đơn hàng đang ở trạng thái chờ xử lý.
+            <h3 className="text-xl font-bold text-stone-900 mt-2">
+              Đặt hàng thành công!
+            </h3>
+            <p className="text-sm text-stone-600 mt-1 max-w-xs mx-auto">
+              Cảm ơn bạn đã lựa chọn BrewLite. Đơn hàng của bạn đã được ghi nhận trên hệ thống.
             </p>
+
+            {/* Chi tiết xác nhận đơn hàng theo US-09 */}
+            <div className="w-full bg-stone-50 border border-stone-200 rounded-2xl p-4 my-4 text-left space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
+                  Mã đơn hàng
+                </span>
+                <span className="font-mono font-bold text-base text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                  {orderCode || 'BL-000000'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
+                  Trạng thái
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  {orderStatus || 'PENDING (Chờ xử lý)'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5 w-full mt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  setCurrentView('orders');
+                }}
+                className="primary-button text-center flex items-center justify-center gap-2 w-full py-3 rounded-2xl font-bold cursor-pointer border-none"
+              >
+                <span>Xem lịch sử đơn</span>
+                <Icon name="arrow" size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="py-2.5 px-4 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-semibold transition-colors cursor-pointer border-none"
+              >
+                Tiếp tục đặt món
+              </button>
+            </div>
           </div>
         ) : cart.length === 0 ? (
           <div className="empty-state">
@@ -90,11 +138,12 @@ export default function CartDrawer({
                         ` • +${item.toppings.length} topping`}
                     </div>
                     <span className="font-bold text-amber-600 text-xs">
-                      {formatMoney(item.unitPrice * item.quantity)}
+                      {formatPrice(item.unitPrice * item.quantity)}
                     </span>
                   </div>
                   <div className="quantity-controls">
                     <button
+                      type="button"
                       onClick={() => onUpdateQuantity(item.cartItemId, -1)}
                       aria-label="Giảm số lượng"
                     >
@@ -102,6 +151,7 @@ export default function CartDrawer({
                     </button>
                     <span>{item.quantity}</span>
                     <button
+                      type="button"
                       onClick={() => onUpdateQuantity(item.cartItemId, 1)}
                       aria-label="Tăng số lượng"
                     >
@@ -114,11 +164,11 @@ export default function CartDrawer({
 
             <div className="checkout-total">
               <span>Tổng cộng:</span>
-              <strong>{formatMoney(total)}</strong>
+              <strong>{formatPrice(total)}</strong>
             </div>
 
             {checkoutError && (
-              <p role="alert" className="text-sm text-red-600">
+              <p role="alert" className="text-sm text-red-600 mb-3">
                 {Array.isArray(checkoutError.message)
                   ? checkoutError.message.join(', ')
                   : checkoutError.message ??
@@ -127,12 +177,13 @@ export default function CartDrawer({
             )}
 
             <button
+              type="button"
               className="primary-button checkout"
               onClick={onCheckout}
               disabled={isSubmitting}
               aria-busy={isSubmitting}
             >
-              {isSubmitting ? 'Placing order...' : 'Tiến hành đặt hàng'}
+              {isSubmitting ? 'Đang tạo đơn...' : 'Tiến hành đặt hàng'}
               {!isSubmitting && <Icon name="arrow" />}
             </button>
             <p className="demo-note">Demo checkout · Thử nghiệm quy trình</p>

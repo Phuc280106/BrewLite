@@ -26,6 +26,7 @@ model User {
   email         String   @unique
   passwordHash  String
   name          String?
+  role          String   @default("CUSTOMER") // "CUSTOMER", "BARISTA", "STAFF"
   loyaltyPoints Int      @default(0) // Điểm thưởng tích lũy (Task 10)
   createdAt     DateTime @default(now())
 

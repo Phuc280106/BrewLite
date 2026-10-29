@@ -69,4 +69,19 @@ describe('OrdersController', () => {
       status: OrderStatus.PREPARING,
     });
   });
+  it('GET /orders gọi ordersService.findAll để lấy toàn bộ đơn cho Barista', async () => {
+    (ordersService as any).findAll = vi.fn().mockResolvedValue([
+      { id: 1, orderCode: 'BL-000001', status: OrderStatus.PAID, items: [] },
+    ]);
+    const result = await controller.findAll();
+
+    expect((ordersService as any).findAll).toHaveBeenCalled();
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 1,
+      orderCode: 'BL-000001',
+      status: OrderStatus.PAID,
+    });
+  });
+
 });

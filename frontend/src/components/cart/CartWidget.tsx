@@ -13,6 +13,7 @@ export default function CartWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderCode, setOrderCode] = useState<string | null>(null);
+  const [orderStatus, setOrderStatus] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<CheckoutError | null>(null);
   const user = useAuthStore((state) => state.user);
   const openAuthModal = useAuthStore((state) => state.openAuthModal);
@@ -53,6 +54,7 @@ export default function CartWidget() {
       });
 
       setOrderCode(response.data.orderCode);
+      setOrderStatus(response.data.status);
       completeCheckout();
     } catch (error) {
       if (axios.isAxiosError<CheckoutError>(error)) {
@@ -94,6 +96,7 @@ export default function CartWidget() {
         ordered={ordered}
         isSubmitting={isSubmitting}
         orderCode={orderCode}
+        orderStatus={orderStatus}
         checkoutError={checkoutError}
         onClose={() => setIsOpen(false)}
         onUpdateQuantity={updateQuantity}

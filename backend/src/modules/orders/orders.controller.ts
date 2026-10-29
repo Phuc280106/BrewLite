@@ -42,6 +42,17 @@ export class OrdersController {
     return this.ordersService.create(body, req.user?.id);
   }
 
+  
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Lấy toàn bộ đơn hàng kèm món (Dành cho Barista / Nhân viên)',
+  })
+  findAll() {
+    return this.ordersService.findAll();
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
