@@ -4,10 +4,6 @@ import { IsIn } from 'class-validator';
 export const PAYMENT_METHODS = ['WALLET', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-/**
- * Phần dữ liệu thanh toán dùng bởi `OrdersService.pay()`.
- * MoMo / VNPay ở frontend đều được gửi lên là `WALLET`.
- */
 export class PayOrderDto {
   @ApiProperty({
     example: 'WALLET',
