@@ -2,6 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule, ObserveInstrument } from './app.module.js';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
+try {
+  process.loadEnvFile?.('.env');
+} catch {
+  // Bỏ qua nếu file .env không tồn tại
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     instrument: ObserveInstrument,
@@ -23,4 +29,4 @@ async function bootstrap() {
   // Đổi cổng Backend sang 3001 và cho phép các thiết bị trong mạng LAN (điện thoại) kết nối
   await app.listen(process.env.PORT ?? 3001, '0.0.0.0');
 }
-bootstrap();
+void bootstrap();

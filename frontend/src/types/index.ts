@@ -71,6 +71,8 @@ export interface CreateOrderResponse {
   orderId: number;
   orderCode: string;
   total: number;
+  discount?: number;
+  couponCode?: string | null;
   status: string;
   createdAt: string;
 }

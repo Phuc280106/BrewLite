@@ -157,22 +157,64 @@ export class OrdersService {
           lineTotal: price * item.quantity,
         };
       });
-      const total = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
- 
+      const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+
+      let discount = 0;
+      let appliedCouponCode: string | null = null;
+
+      if (input.couponCode && input.couponCode.trim()) {
+        const normalizedCode = input.couponCode.trim().toUpperCase();
+        const promotion = await transaction.promotion.findUnique({
+          where: { code: normalizedCode },
+        });
+
+        if (!promotion || !promotion.isActive) {
+          throw new BadRequestException('Mã khuyến mãi không hợp lệ hoặc đã hết hạn');
+        }
+
+        if (subtotal < promotion.minOrder) {
+          throw new BadRequestException(
+            `Đơn hàng chưa đạt giá trị tối thiểu ${promotion.minOrder.toLocaleString('vi-VN')}đ để áp dụng mã khuyến mãi này`
+          );
+        }
+
+        if (promotion.discountPercent != null) {
+          discount = (subtotal * promotion.discountPercent) / 100;
+        } else if (promotion.discountAmount != null) {
+          discount = promotion.discountAmount;
+        }
+
+        discount = Math.min(discount, subtotal);
+        appliedCouponCode = promotion.code;
+      }
+
+      const total = Math.max(0, subtotal - discount);
+
       const order = await transaction.order.create({
         data: {
           userId: userId ?? null,
           total,
+          discount,
+          couponCode: appliedCouponCode,
           status: 'PENDING',
           items: { create: orderItems },
         },
-        select: { id: true, total: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          total: true,
+          discount: true,
+          couponCode: true,
+          status: true,
+          createdAt: true,
+        },
       });
- 
+
       return {
         orderId: order.id,
         orderCode: `BL-${String(order.id).padStart(6, '0')}`,
         total: order.total,
+        discount: order.discount,
+        couponCode: order.couponCode,
         status: order.status,
         createdAt: order.createdAt,
       };
@@ -212,8 +254,20 @@ export class OrdersService {
         data: { status: OrderStatus.PAID },
       });
 
+      // Tự động tích lũy điểm thưởng: 10.000đ = 1 điểm
+      const loyaltyPointsEarned = Math.floor(order.total / 10000);
+      if (order.userId && loyaltyPointsEarned > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            loyaltyPoints: {
+              increment: loyaltyPointsEarned,
+            },
+          },
+        });
+      }
 
-      return { idempotent: false, payment };
+      return { idempotent: false, payment, loyaltyPointsEarned };
     });
   }
 

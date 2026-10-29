@@ -5,10 +5,12 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsOptional,
+  IsString,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ALLOWED_SIZE_IDS,
   ALLOWED_TOPPING_IDS,
@@ -44,4 +46,12 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
+
+  @ApiPropertyOptional({
+    example: 'BREW10',
+    description: 'Mã khuyến mãi áp dụng cho đơn hàng',
+  })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
