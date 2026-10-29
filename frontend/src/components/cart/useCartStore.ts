@@ -6,11 +6,10 @@ import { CartItem, CartItemOptions } from '../../types';
 
 interface CartStore {
   cart: CartItem[];
-  ordered: boolean;
   toastMessage: string | null;
   addToCart: (options: CartItemOptions) => void;
   updateQuantity: (cartItemId: string, change: number) => void;
-  completeCheckout: () => void;
+  clearCart: () => void;
 }
 
 interface PersistedCartState {
@@ -23,7 +22,6 @@ export const useCartStore = create<CartStore>()(
   persist<CartStore, [], [], PersistedCartState>(
     (set) => ({
       cart: [],
-      ordered: false,
       toastMessage: null,
       addToCart: (options) => {
         const toppings = [...options.toppings];
@@ -42,7 +40,7 @@ export const useCartStore = create<CartStore>()(
               ...cart[existingIndex],
               quantity: cart[existingIndex].quantity + options.quantity,
             };
-            return { cart, ordered: false };
+            return { cart };
           }
 
           return {
@@ -59,7 +57,6 @@ export const useCartStore = create<CartStore>()(
                 quantity: options.quantity,
               },
             ],
-            ordered: false,
           };
         });
 
@@ -81,7 +78,7 @@ export const useCartStore = create<CartStore>()(
             })
             .filter((item): item is CartItem => item !== null),
         })),
-      completeCheckout: () => set({ ordered: true, cart: [] }),
+      clearCart: () => set({ cart: [] }),
     }),
     {
       name: 'brewlite-cart',

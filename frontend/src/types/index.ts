@@ -1,5 +1,3 @@
-// Định nghĩa toàn bộ kiểu dữ liệu cho Frontend BrewLite
-
 export interface ProductItem {
   id: number;
   name: string;
@@ -71,8 +69,31 @@ export interface CreateOrderResponse {
   orderId: number;
   orderCode: string;
   total: number;
+  discount?: number;
+  couponCode?: string | null;
   status: string;
   createdAt: string;
+}
+
+export type PaymentMethodId = 'MOMO' | 'VNPAY' | 'CARD';
+
+export interface PromotionPreview {
+  code: string;
+  description: string | null;
+  subtotal: number;
+  discount: number;
+  total: number;
+}
+
+export interface PaymentResponse {
+  idempotent: boolean;
+  payment: {
+    id: number;
+    orderId: number;
+    amount: number;
+    method: string;
+  };
+  loyaltyPointsEarned?: number;
 }
 
 export type IconName =

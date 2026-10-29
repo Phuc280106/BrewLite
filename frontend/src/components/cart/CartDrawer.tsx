@@ -1,17 +1,13 @@
 'use client';
 
 import React from 'react';
-import { CartItem, CheckoutError } from '../../types';
+import { CartItem } from '../../types';
 import Icon from '../common/Icon';
 
 interface CartDrawerProps {
   isOpen: boolean;
   cart: CartItem[];
   total: number;
-  ordered: boolean;
-  isSubmitting: boolean;
-  orderCode: string | null;
-  checkoutError: CheckoutError | null;
   onClose: () => void;
   onUpdateQuantity: (cartItemId: string, change: number) => void;
   onCheckout: () => void;
@@ -21,10 +17,6 @@ export default function CartDrawer({
   isOpen,
   cart,
   total,
-  ordered,
-  isSubmitting,
-  orderCode,
-  checkoutError,
   onClose,
   onUpdateQuantity,
   onCheckout,
@@ -53,19 +45,7 @@ export default function CartDrawer({
           </button>
         </div>
 
-        {ordered ? (
-          <div className="empty-state">
-            <span className="empty-icon">
-              <Icon name="check" size={40} />
-            </span>
-            <h3>Order received!</h3>
-            <p>
-              Mã đơn hàng của bạn: <strong>{orderCode}</strong>
-              <br />
-              Đơn hàng đang ở trạng thái chờ xử lý.
-            </p>
-          </div>
-        ) : cart.length === 0 ? (
+        {cart.length === 0 ? (
           <div className="empty-state">
             <span className="empty-icon">
               <Icon name="bag" size={40} />
@@ -117,25 +97,14 @@ export default function CartDrawer({
               <strong>{formatMoney(total)}</strong>
             </div>
 
-            {checkoutError && (
-              <p role="alert" className="text-sm text-red-600">
-                {Array.isArray(checkoutError.message)
-                  ? checkoutError.message.join(', ')
-                  : checkoutError.message ??
-                    'Could not place the order. Please try again.'}
-              </p>
-            )}
-
             <button
               className="primary-button checkout"
               onClick={onCheckout}
-              disabled={isSubmitting}
-              aria-busy={isSubmitting}
             >
-              {isSubmitting ? 'Placing order...' : 'Tiến hành đặt hàng'}
-              {!isSubmitting && <Icon name="arrow" />}
+              Tiến hành thanh toán
+              <Icon name="arrow" />
             </button>
-            <p className="demo-note">Demo checkout · Thử nghiệm quy trình</p>
+            <p className="demo-note">Chọn phương thức và nhập mã giảm giá ở bước sau</p>
           </>
         )}
       </section>

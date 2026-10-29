@@ -1,26 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import axios from 'axios';
 import CartBottomBar from './CartBottomBar';
 import CartDrawer from './CartDrawer';
 import { useCartStore } from './useCartStore';
 import { useAuthStore } from '@/store/useAuthStore';
-import { api } from '@/lib/api';
-import { CheckoutError, CreateOrderResponse } from '@/types';
+import PaymentModal from '../payment/PaymentModal';
 
 export default function CartWidget() {
   const [isOpen, setIsOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [orderCode, setOrderCode] = useState<string | null>(null);
-  const [checkoutError, setCheckoutError] = useState<CheckoutError | null>(null);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const user = useAuthStore((state) => state.user);
   const openAuthModal = useAuthStore((state) => state.openAuthModal);
   const cart = useCartStore((state) => state.cart);
-  const ordered = useCartStore((state) => state.ordered);
   const toastMessage = useCartStore((state) => state.toastMessage);
   const updateQuantity = useCartStore((state) => state.updateQuantity);
-  const completeCheckout = useCartStore((state) => state.completeCheckout);
+  const clearCart = useCartStore((state) => state.clearCart);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce(
     (sum, item) => sum + item.unitPrice * item.quantity,
@@ -31,44 +26,17 @@ export default function CartWidget() {
     void useCartStore.persist.rehydrate();
   }, []);
 
-  const handleCheckout = async () => {
-    if (cart.length === 0 || isSubmitting) return;
+  const handleCheckout = () => {
+    if (cart.length === 0) return;
 
     if (!user) {
       setIsOpen(false);
-      openAuthModal('login', 'Vui lòng đăng nhập để tiến hành đặt hàng');
+      openAuthModal('login', 'Vui lòng đăng nhập để tiến hành thanh toán');
       return;
     }
 
-    setIsSubmitting(true);
-    setCheckoutError(null);
-    try {
-      const response = await api.post<CreateOrderResponse>('/orders', {
-        items: cart.map(({ productId, size, toppings, quantity }) => ({
-          productId,
-          size,
-          toppings,
-          quantity,
-        })),
-      });
-
-      setOrderCode(response.data.orderCode);
-      completeCheckout();
-    } catch (error) {
-      if (axios.isAxiosError<CheckoutError>(error)) {
-        setCheckoutError(
-          error.response?.data ?? {
-            message: 'Could not place the order. Please try again.',
-          }
-        );
-      } else {
-        setCheckoutError({
-          message: 'Could not place the order. Please try again.',
-        });
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
+    setIsOpen(false);
+    setIsPaymentOpen(true);
   };
 
   return (
@@ -91,14 +59,18 @@ export default function CartWidget() {
         isOpen={isOpen}
         cart={cart}
         total={cartTotal}
-        ordered={ordered}
-        isSubmitting={isSubmitting}
-        orderCode={orderCode}
-        checkoutError={checkoutError}
         onClose={() => setIsOpen(false)}
         onUpdateQuantity={updateQuantity}
         onCheckout={handleCheckout}
       />
+      {isPaymentOpen && (
+        <PaymentModal
+          cart={cart}
+          subtotal={cartTotal}
+          onClose={() => setIsPaymentOpen(false)}
+          onPaid={clearCart}
+        />
+      )}
     </>
   );
 }

@@ -6,16 +6,13 @@ import { ProductModule } from './modules/product/product.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
 import { OptionsModule } from './modules/options/options.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { PromotionsModule } from './modules/promotions/promotions.module.js';
 
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
-  //import các module của từng module nghiệp vụ vào
   imports: [
-    // Distributed tracing, auto-correlated logs, request/job metrics, error
-    // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com
-    
     ObserveModule.forRoot({
       appKey: 'YOUR_APP_KEY',
       appSecret: 'YOUR_APP_SECRET',
@@ -25,6 +22,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     OrdersModule,
     OptionsModule,
     AuthModule,
+    PromotionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

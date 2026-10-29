@@ -11,13 +11,16 @@ import {
   TOPPING_PRICE,
 } from '../options/options.constants.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
- 
+import { PayOrderDto } from './dto/pay-order.dto.js';
+import { assertTransition, OrderStatus } from './order-state-machine.js';
+import { calculateDiscount } from '../promotions/promotion-calc.js';
+
 /** Số lần thử lại tối đa khi có xung đột phiên bản (optimistic locking). */
 export const MAX_ORDER_ATTEMPTS = 5;
- 
+
 /** Thời gian chờ cơ sở giữa các lần thử (ms), tăng dần + jitter. */
 const RETRY_BASE_DELAY_MS = 20;
- 
+
 /**
  * Được ném bên trong transaction khi một sản phẩm đã bị giao dịch khác sửa
  * (version/stock thay đổi) giữa lúc đọc và lúc ghi. Ném lỗi sẽ rollback toàn
@@ -29,9 +32,9 @@ export class StockVersionConflictError extends Error {
     this.name = 'StockVersionConflictError';
   }
 }
- 
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
- 
+
 /** P2034: Prisma báo write conflict / deadlock -> cũng an toàn để thử lại. */
 function isRetryable(error: unknown): boolean {
   if (error instanceof StockVersionConflictError) return true;
@@ -41,13 +44,13 @@ function isRetryable(error: unknown): boolean {
     (error as { code?: string }).code === 'P2034'
   );
 }
- 
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
- 
+
   constructor(private readonly prisma: PrismaService) {}
- 
+
   /**
    * Tạo đơn hàng PENDING và giữ chỗ (trừ) tồn kho một cách nguyên tử.
    *
@@ -155,25 +158,170 @@ export class OrdersService {
           lineTotal: price * item.quantity,
         };
       });
-      const total = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
- 
+      const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+
+      let discount = 0;
+      let appliedCouponCode: string | null = null;
+
+      if (input.couponCode && input.couponCode.trim()) {
+        const normalizedCode = input.couponCode.trim().toUpperCase();
+        const promotion = await transaction.promotion.findUnique({
+          where: { code: normalizedCode },
+        });
+
+        discount = calculateDiscount(promotion, subtotal);
+        appliedCouponCode = normalizedCode;
+      }
+
+      const total = Math.max(0, subtotal - discount);
+
       const order = await transaction.order.create({
         data: {
           userId: userId ?? null,
           total,
+          discount,
+          couponCode: appliedCouponCode,
           status: 'PENDING',
           items: { create: orderItems },
         },
-        select: { id: true, total: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          total: true,
+          discount: true,
+          couponCode: true,
+          status: true,
+          createdAt: true,
+        },
       });
- 
+
       return {
         orderId: order.id,
         orderCode: `BL-${String(order.id).padStart(6, '0')}`,
         total: order.total,
+        discount: order.discount,
+        couponCode: order.couponCode,
         status: order.status,
         createdAt: order.createdAt,
       };
     });
+  }
+  async pay(orderId: number, idempotencyKey: string, dto: PayOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Kiểm tra idempotency: nếu key đã tồn tại → kiểm tra có đúng đơn hàng này không
+      const existing = await tx.payment.findUnique({
+        where: { idempotencyKey },
+      });
+      if (existing) {
+        if (existing.orderId !== orderId) {
+          throw new BadRequestException(
+            `Idempotency-Key "${idempotencyKey}" đã được sử dụng cho đơn hàng #${existing.orderId}, không thể dùng cho đơn hàng #${orderId}`
+          );
+        }
+        return { idempotent: true, payment: existing };
+      }
+
+      const order = await tx.order.findUnique({ where: { id: orderId } });
+      if (!order) throw new NotFoundException(`Order ${orderId} not found`);
+      assertTransition(order.status, OrderStatus.PAID);
+
+      // 3. Tạo Payment (tự động lấy đúng tổng tiền order.total) và cập nhật Order → PAID
+      const payment = await tx.payment.create({
+        data: {
+          orderId,
+          idempotencyKey,
+          amount: order.total,
+          method: dto.method,
+        },
+      });
+
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.PAID },
+      });
+
+      // Tự động tích lũy điểm thưởng: 10.000đ = 1 điểm
+      const loyaltyPointsEarned = Math.floor(order.total / 10000);
+      if (order.userId && loyaltyPointsEarned > 0) {
+        await tx.user.update({
+          where: { id: order.userId },
+          data: {
+            loyaltyPoints: {
+              increment: loyaltyPointsEarned,
+            },
+          },
+        });
+      }
+
+      return { idempotent: false, payment, loyaltyPointsEarned };
+    });
+  }
+
+  /**
+   * Cập nhật trạng thái đơn hàng theo Order State Machine (Task 10.1).
+   * Dùng `assertTransition` để chặn mọi chuyển tiếp trạng thái không hợp lệ (ném lỗi 400).
+   */
+  async updateStatus(orderId: number, newStatus: OrderStatus | string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    assertTransition(order.status, newStatus);
+
+    const updatedOrder = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: newStatus },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                imageUrl: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      ...updatedOrder,
+      orderCode: `BL-${String(updatedOrder.id).padStart(6, '0')}`,
+    };
+  }
+
+  /**
+   * Lấy danh sách lịch sử đơn hàng kèm món của user đang đăng nhập (US-09).
+   */
+  async findMyOrders(userId: number) {
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                imageUrl: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return orders.map((order) => ({
+      ...order,
+      orderCode: `BL-${String(order.id).padStart(6, '0')}`,
+    }));
   }
 }
