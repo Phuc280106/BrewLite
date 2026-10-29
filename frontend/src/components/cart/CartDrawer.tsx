@@ -163,7 +163,7 @@ export default function CartDrawer({
             </div>
 
             <div className="checkout-total">
-              <span>Tổng cộng:</span>
+              <span>Tạm tính giỏ hàng:</span>
               <strong>{formatPrice(total)}</strong>
             </div>
 
@@ -183,10 +183,10 @@ export default function CartDrawer({
               disabled={isSubmitting}
               aria-busy={isSubmitting}
             >
-              {isSubmitting ? 'Đang tạo đơn...' : 'Tiến hành đặt hàng'}
+              {isSubmitting ? 'Đang mở thanh toán...' : 'Tiến hành thanh toán'}
               {!isSubmitting && <Icon name="arrow" />}
             </button>
-            <p className="demo-note">Demo checkout · Thử nghiệm quy trình</p>
+            <p className="demo-note">Chọn ví MoMo / VNPay / Thẻ & Áp mã giảm giá</p>
           </>
         )}
       </section>
