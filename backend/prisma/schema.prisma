@@ -14,8 +14,6 @@ model Product {
   category    String?
   price       Float
   imageUrl    String
-  stock       Int
-  version     Int         @default(0) // Phục vụ Optimistic Locking (Task 10)
   createdAt   DateTime    @default(now())
 
   orderItems  OrderItem[]
@@ -85,3 +83,15 @@ model Payment {
   method         String   // "WALLET", "CARD"
   createdAt      DateTime @default(now())
 }
+model Ingredient{
+  id             Int      @id @default(autoincrement())
+  name           String
+  unit           String
+  stock          Int      @default(0)
+}
+model RecipeItem{
+  id             Int      @id @default(autoincrement())
+  productId      Int
+  size           String   // "S", "M", "L"
+  amount         Float
+} 
