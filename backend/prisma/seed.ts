@@ -1,10 +1,12 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('Đang kiểm tra và cập nhật dữ liệu...');
 
+  // Seed Products
   const products = [
     {
       name: 'Cà phê sữa đá',
@@ -108,6 +110,53 @@ async function main() {
   }
 
   console.log('Đã nạp thành công các mã khuyến mãi mẫu vào Database!');
+
+  // Seed 3 Users: 2 Customers và 1 Barista
+  const defaultPassword = '123456';
+  const saltRounds = 10;
+  const passwordHash = await bcrypt.hash(defaultPassword, saltRounds);
+
+  const users = [
+    {
+      email: 'user1@brewlite.vn',
+      name: 'Nguyễn Văn An (User 1)',
+      role: 'CUSTOMER',
+      loyaltyPoints: 100,
+      passwordHash,
+    },
+    {
+      email: 'user2@brewlite.vn',
+      name: 'Trần Thị Bình (User 2)',
+      role: 'CUSTOMER',
+      loyaltyPoints: 50,
+      passwordHash,
+    },
+    {
+      email: 'barista@brewlite.vn',
+      name: 'Lê Pha Chế (Barista)',
+      role: 'BARISTA',
+      loyaltyPoints: 0,
+      passwordHash,
+    },
+  ];
+
+  for (const u of users) {
+    await prisma.user.upsert({
+      where: { email: u.email },
+      update: {
+        name: u.name,
+        role: u.role,
+        loyaltyPoints: u.loyaltyPoints,
+        passwordHash: u.passwordHash,
+      },
+      create: u,
+    });
+  }
+
+  console.log('Đã nạp thành công 3 tài khoản (2 user và 1 barista):');
+  users.forEach((u) => {
+    console.log(`- [${u.role}] ${u.email} | Mật khẩu: ${defaultPassword} | Tên: ${u.name}`);
+  });
 }
 
 main()
