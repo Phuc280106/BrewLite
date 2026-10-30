@@ -15,7 +15,7 @@ CREATE TABLE "RecipeItem" (
     "ingredientId" INTEGER NOT NULL,
     "size" TEXT NOT NULL,
     "amount" DOUBLE PRECISION NOT NULL,
-
+    
     CONSTRAINT "RecipeItem_pkey" PRIMARY KEY ("id")
 );
 

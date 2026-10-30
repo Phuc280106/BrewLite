@@ -57,6 +57,18 @@ $ yarn run test:e2e
 $ yarn run test:cov
 ```
 
+## Export recipe summary
+
+The `RecipeItem` table stores one row per ingredient in a recipe. To export one
+row per product and size with its ingredients combined, apply migrations and
+query the `RecipeItemExport` view:
+
+```sql
+SELECT "product", "size", "ingredients"
+FROM "RecipeItemExport"
+ORDER BY "product", "size";
+```
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
