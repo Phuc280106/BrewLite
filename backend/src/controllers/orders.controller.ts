@@ -33,15 +33,21 @@ export class OrdersController {
 
   @Get('promotions/validate')
   @ApiOperation({
-    summary: 'Kiểm tra tính hợp lệ và số tiền giảm giá của mã khuyến mãi',
+    summary: 'Kiểm tra tính hợp lệ và số tiền giảm giá của mã khuyến mãi (Kiểm tra cả ràng buộc 1 lần/user)',
   })
   @ApiQuery({ name: 'code', example: 'BREW10' })
   @ApiQuery({ name: 'subtotal', example: 60000 })
+  @ApiQuery({ name: 'userId', required: false, example: 1 })
   validatePromotion(
     @Query('code') code: string,
-    @Query('subtotal') subtotal: string
+    @Query('subtotal') subtotal: string,
+    @Query('userId') userId?: string
   ) {
-    return this.ordersService.validatePromotion(code, Number(subtotal) || 0);
+    return this.ordersService.validatePromotion(
+      code,
+      Number(subtotal) || 0,
+      userId ? Number(userId) : undefined
+    );
   }
 
   @Get('me')
@@ -75,7 +81,7 @@ export class OrdersController {
     })
   )
   @ApiOperation({
-    summary: 'Tạo đơn hàng ở trạng thái PENDING kèm mã khuyến mãi (Yêu cầu đăng nhập JWT)',
+    summary: 'Tạo đơn hàng ở trạng thái PENDING kèm mã khuyến mãi và điểm thưởng (Yêu cầu đăng nhập JWT)',
   })
   create(
     @Body() body: CreateOrderDto,

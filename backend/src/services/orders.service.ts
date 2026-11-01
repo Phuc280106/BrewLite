@@ -20,6 +20,12 @@ export const MAX_ORDER_ATTEMPTS = 5;
 /** Thời gian chờ cơ sở giữa các lần thử (ms), tăng dần + jitter. */
 const RETRY_BASE_DELAY_MS = 20;
 
+/** Giá trị quy đổi điểm thưởng: 1 điểm = 1.000 VNĐ */
+export const LOYALTY_POINT_VALUE = 1000;
+
+/** Tỉ lệ tích lũy điểm thưởng: mỗi 10.000 VNĐ = 1 điểm */
+export const LOYALTY_EARN_RATE = 10000;
+
 /**
  * Được ném bên trong transaction khi một sản phẩm đã bị giao dịch khác sửa
  * (version/stock thay đổi) giữa lúc đọc và lúc ghi. Ném lỗi sẽ rollback toàn
@@ -160,6 +166,7 @@ export class OrdersService {
       let discount = 0;
       let appliedCouponCode: string | null = null;
 
+      // 1. Áp dụng mã khuyến mãi (nếu có)
       if (input.couponCode && input.couponCode.trim()) {
         const normalizedCode = input.couponCode.trim().toUpperCase();
         const promotion = await transaction.promotion.findUnique({
@@ -176,6 +183,22 @@ export class OrdersService {
           );
         }
 
+        // RÀNG BUỘC: Mỗi tài khoản chỉ được phép dùng mỗi mã đúng 1 lần
+        if (userId) {
+          const alreadyUsed = await transaction.order.findFirst({
+            where: {
+              userId,
+              couponCode: normalizedCode,
+              status: { notIn: [OrderStatus.CANCELLED, OrderStatus.PAYMENT_FAILED] },
+            },
+          });
+          if (alreadyUsed) {
+            throw new BadRequestException(
+              `Tài khoản của bạn đã sử dụng mã khuyến mãi "${normalizedCode}" trước đó. Mỗi tài khoản chỉ được sử dụng 1 lần.`
+            );
+          }
+        }
+
         if (promotion.discountPercent != null) {
           discount = (subtotal * promotion.discountPercent) / 100;
         } else if (promotion.discountAmount != null) {
@@ -186,7 +209,44 @@ export class OrdersService {
         appliedCouponCode = promotion.code;
       }
 
-      const total = Math.max(0, subtotal - discount);
+      // 2. Áp dụng điểm thưởng thành viên (Loyalty points)
+      let pointsUsed = 0;
+      let pointDiscount = 0;
+
+      if (input.pointsUsed && input.pointsUsed > 0) {
+        if (!userId) {
+          throw new BadRequestException('Chỉ thành viên đã đăng nhập mới có thể sử dụng điểm tích lũy');
+        }
+
+        const user = await transaction.user.findUnique({
+          where: { id: userId },
+          select: { id: true, loyaltyPoints: true },
+        });
+
+        if (!user) {
+          throw new NotFoundException('Không tìm thấy tài khoản người dùng');
+        }
+
+        if (user.loyaltyPoints < input.pointsUsed) {
+          throw new BadRequestException(
+            `Số điểm tích lũy của bạn không đủ (${user.loyaltyPoints} điểm < ${input.pointsUsed} điểm)`
+          );
+        }
+
+        const remainingAfterCoupon = Math.max(0, subtotal - discount);
+        const requestedDiscount = Math.floor(input.pointsUsed) * LOYALTY_POINT_VALUE;
+
+        if (requestedDiscount > remainingAfterCoupon) {
+          pointDiscount = remainingAfterCoupon;
+          pointsUsed = Math.ceil(pointDiscount / LOYALTY_POINT_VALUE);
+        } else {
+          pointDiscount = requestedDiscount;
+          pointsUsed = Math.floor(input.pointsUsed);
+        }
+      }
+
+      const totalDiscount = discount + pointDiscount;
+      const total = Math.max(0, subtotal - totalDiscount);
 
       const order = await transaction.order.create({
         data: {
@@ -194,6 +254,8 @@ export class OrdersService {
           total,
           discount,
           couponCode: appliedCouponCode,
+          pointsUsed,
+          pointDiscount,
           status: 'PENDING',
           items: { create: orderItems },
         },
@@ -202,6 +264,8 @@ export class OrdersService {
           total: true,
           discount: true,
           couponCode: true,
+          pointsUsed: true,
+          pointDiscount: true,
           status: true,
           createdAt: true,
         },
@@ -213,6 +277,8 @@ export class OrdersService {
         total: order.total,
         discount: order.discount,
         couponCode: order.couponCode,
+        pointsUsed: order.pointsUsed,
+        pointDiscount: order.pointDiscount,
         status: order.status,
         createdAt: order.createdAt,
       };
@@ -256,20 +322,45 @@ export class OrdersService {
         data: { status: OrderStatus.PAID },
       });
 
-      // Tự động tích lũy điểm thưởng: 10.000đ = 1 điểm
-      const loyaltyPointsEarned = Math.floor(order.total / 10000);
-      if (order.userId && loyaltyPointsEarned > 0) {
-        await tx.user.update({
-          where: { id: order.userId },
-          data: {
-            loyaltyPoints: {
-              increment: loyaltyPointsEarned,
+      // 4. Trong transaction thanh toán thành công: trừ pointsUsed khỏi tài khoản của User, đồng thời cộng điểm mới tích lũy
+      const loyaltyPointsEarned = Math.floor(order.total / LOYALTY_EARN_RATE);
+      const pointsUsed = order.pointsUsed || 0;
+      let updatedUserPoints: number | undefined;
+
+      if (order.userId) {
+        if (pointsUsed > 0) {
+          const user = await tx.user.findUnique({ where: { id: order.userId } });
+          if (user) {
+            if (user.loyaltyPoints < pointsUsed) {
+              throw new BadRequestException(
+                `Số điểm tích lũy của bạn không đủ (${user.loyaltyPoints} điểm < ${pointsUsed} điểm)`
+              );
+            }
+            updatedUserPoints = Math.max(0, user.loyaltyPoints - pointsUsed + loyaltyPointsEarned);
+            await tx.user.update({
+              where: { id: order.userId },
+              data: { loyaltyPoints: updatedUserPoints },
+            });
+          }
+        } else if (loyaltyPointsEarned > 0) {
+          await tx.user.update({
+            where: { id: order.userId },
+            data: {
+              loyaltyPoints: {
+                increment: loyaltyPointsEarned,
+              },
             },
-          },
-        });
+          });
+        }
       }
 
-      return { idempotent: false, payment, loyaltyPointsEarned };
+      return {
+        idempotent: false,
+        payment,
+        loyaltyPointsEarned,
+        pointsUsed: order.pointsUsed,
+        remainingLoyaltyPoints: updatedUserPoints,
+      };
     });
   }
 
@@ -382,8 +473,9 @@ export class OrdersService {
 
   /**
    * Kiểm tra và tính toán giảm giá thử trước khi tạo đơn (Promotion preview/validation).
+   * Hỗ trợ ràng buộc mỗi tài khoản chỉ được dùng mã đúng 1 lần nếu truyền userId.
    */
-  async validatePromotion(code: string, subtotal: number) {
+  async validatePromotion(code: string, subtotal: number, userId?: number) {
     if (!code || !code.trim()) {
       throw new BadRequestException('Vui lòng nhập mã khuyến mãi');
     }
@@ -394,6 +486,21 @@ export class OrdersService {
 
     if (!promotion || !promotion.isActive) {
       throw new BadRequestException('Mã khuyến mãi không tồn tại hoặc đã hết hạn');
+    }
+
+    if (userId) {
+      const alreadyUsed = await this.prisma.order.findFirst({
+        where: {
+          userId,
+          couponCode: normalizedCode,
+          status: { notIn: [OrderStatus.CANCELLED, OrderStatus.PAYMENT_FAILED] },
+        },
+      });
+      if (alreadyUsed) {
+        throw new BadRequestException(
+          `Tài khoản của bạn đã sử dụng mã khuyến mãi "${normalizedCode}" này rồi. Mỗi tài khoản chỉ được dùng mã 1 lần.`
+        );
+      }
     }
 
     if (subtotal < promotion.minOrder) {
@@ -509,15 +616,32 @@ export class OrdersService {
         data: { status: OrderStatus.PAID },
       });
 
-      // 8. Tích lũy điểm thưởng loyalty (10.000đ = 1 điểm)
-      const loyaltyPointsEarned = Math.floor(order.total / 10000);
-      if (order.userId && loyaltyPointsEarned > 0) {
-        await tx.user.update({
-          where: { id: order.userId },
-          data: {
-            loyaltyPoints: { increment: loyaltyPointsEarned },
-          },
-        });
+      // 8. Transaction thanh toán thành công: trừ pointsUsed và cộng điểm tích lũy mới
+      const loyaltyPointsEarned = Math.floor(order.total / LOYALTY_EARN_RATE);
+      const pointsUsed = order.pointsUsed || 0;
+      let updatedUserPoints: number | undefined;
+
+      if (order.userId) {
+        if (pointsUsed > 0) {
+          const user = await tx.user.findUnique({ where: { id: order.userId } });
+          if (user) {
+            if (user.loyaltyPoints < pointsUsed) {
+              throw new BadRequestException(
+                `Số điểm tích lũy của bạn không đủ (${user.loyaltyPoints} điểm < ${pointsUsed} điểm)`
+              );
+            }
+            updatedUserPoints = Math.max(0, user.loyaltyPoints - pointsUsed + loyaltyPointsEarned);
+            await tx.user.update({
+              where: { id: order.userId },
+              data: { loyaltyPoints: updatedUserPoints },
+            });
+          }
+        } else if (loyaltyPointsEarned > 0) {
+          await tx.user.update({
+            where: { id: order.userId },
+            data: { loyaltyPoints: { increment: loyaltyPointsEarned } },
+          });
+        }
       }
 
       this.logger.log(`[Webhook] Đơn hàng #${order.id} đã chuyển trạng thái PENDING -> PAID thành công!`);
@@ -529,6 +653,8 @@ export class OrdersService {
         status: OrderStatus.PAID,
         paymentId: payment.id,
         loyaltyPointsEarned,
+        pointsUsed: order.pointsUsed,
+        remainingLoyaltyPoints: updatedUserPoints,
       };
     });
   }
@@ -545,6 +671,8 @@ export class OrdersService {
         total: true,
         discount: true,
         couponCode: true,
+        pointsUsed: true,
+        pointDiscount: true,
         updatedAt: true,
       },
     });
@@ -560,6 +688,8 @@ export class OrdersService {
       total: order.total,
       discount: order.discount,
       couponCode: order.couponCode,
+      pointsUsed: order.pointsUsed,
+      pointDiscount: order.pointDiscount,
       updatedAt: order.updatedAt,
     };
   }

@@ -12,6 +12,7 @@ interface AuthState {
   authNotice: string | null;
   setAuth: (user: UserProfile, token: string) => void;
   logout: () => void;
+  updateLoyaltyPoints: (points: number) => void;
   openAuthModal: (tab?: 'login' | 'register', notice?: string) => void;
   closeAuthModal: () => void;
   setAuthModalTab: (tab: 'login' | 'register') => void;
@@ -49,6 +50,11 @@ export const useAuthStore = create<AuthState>()(
           authNotice: null,
         });
       },
+
+      updateLoyaltyPoints: (points) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, loyaltyPoints: points } : null,
+        })),
 
       openAuthModal: (tab = 'login', notice) =>
         set({

@@ -636,6 +636,237 @@ describe('OrdersService', () => {
     });
   });
 
+  describe('OrdersService - Loyalty Points Redemption & Single-Use Coupon', () => {
+    let service: OrdersService;
+    let mockPrisma: any;
+
+    beforeEach(() => {
+      mockPrisma = {
+        order: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          findUnique: vi.fn(),
+          create: vi.fn().mockImplementation(({ data }: any) =>
+            Promise.resolve({
+              id: 99,
+              total: data.total,
+              discount: data.discount ?? 0,
+              pointDiscount: data.pointDiscount ?? 0,
+              pointsUsed: data.pointsUsed ?? 0,
+              couponCode: data.couponCode ?? null,
+              status: data.status,
+              createdAt: new Date(),
+            })
+          ),
+          update: vi.fn(),
+        },
+        promotion: {
+          findUnique: vi.fn().mockResolvedValue({
+            code: 'CHAOBAN',
+            discountPercent: null,
+            discountAmount: 20000,
+            minOrder: 40000,
+            isActive: true,
+          }),
+        },
+        user: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: 7,
+            loyaltyPoints: 50,
+          }),
+          update: vi.fn(),
+        },
+        payment: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          create: vi.fn().mockResolvedValue({ id: 1 }),
+        },
+        product: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: 12, stock: 10, price: 25000, version: 0 },
+          ]),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        $transaction: vi.fn(async (cb: any) => cb(mockPrisma)),
+      };
+
+      service = new OrdersService(mockPrisma as unknown as PrismaService);
+    });
+
+    describe('Ràng buộc 1 mã / 1 tài khoản (Single-use coupon per user)', () => {
+      it('cho phép validate khi user chưa từng dùng mã khuyến mãi này', async () => {
+        mockPrisma.order.findFirst.mockResolvedValue(null);
+
+        const result = await service.validatePromotion('CHAOBAN', 70000, 7);
+        expect(result.code).toBe('CHAOBAN');
+        expect(result.discount).toBe(20000);
+      });
+
+      it('từ chối validate khi user đã từng sử dụng mã khuyến mãi này', async () => {
+        mockPrisma.order.findFirst.mockResolvedValue({ id: 10, couponCode: 'CHAOBAN', status: 'PAID' });
+
+        await expect(service.validatePromotion('CHAOBAN', 70000, 7)).rejects.toThrow(
+          BadRequestException
+        );
+      });
+
+      it('chặn tạo đơn hàng nếu user đã dùng mã khuyến mãi này trước đó', async () => {
+        mockPrisma.order.findFirst.mockResolvedValue({ id: 10, couponCode: 'CHAOBAN', status: 'PAID' });
+
+        await expect(
+          service.create(
+            plainToInstance(CreateOrderDto, {
+              items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+              couponCode: 'CHAOBAN',
+            }),
+            7
+          )
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('vẫn cho phép dùng lại mã nếu đơn hàng trước đó bị CANCELLED hoặc PAYMENT_FAILED', async () => {
+        mockPrisma.order.findFirst.mockResolvedValue(null);
+
+        const result = await service.create(
+          plainToInstance(CreateOrderDto, {
+            items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+            couponCode: 'CHAOBAN',
+          }),
+          7
+        );
+
+        expect(result.orderId).toBe(99);
+        expect(result.couponCode).toBe('CHAOBAN');
+      });
+    });
+
+    describe('Sử dụng điểm thưởng đổi tiền giảm (Loyalty points redemption)', () => {
+      it('cho phép user dùng điểm thưởng hợp lệ và giảm trừ tiền chính xác (1 điểm = 1.000đ)', async () => {
+        // subtotal = 2 * 30.000 = 60.000đ (size M = +5k). Dùng 20 điểm = -20.000đ -> total = 40.000đ
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 50 });
+
+        const result = await service.create(
+          plainToInstance(CreateOrderDto, {
+            items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+            pointsUsed: 20,
+          }),
+          7
+        );
+
+        expect(result.total).toBe(40000);
+        expect(result.pointDiscount).toBe(20000);
+        expect(result.pointsUsed).toBe(20);
+      });
+
+      it('kết hợp mã giảm giá và điểm thưởng thành công', async () => {
+        // subtotal = 60.000đ. Coupon CHAOBAN = -20.000đ. Dùng 15 điểm = -15.000đ -> total = 25.000đ
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 50 });
+
+        const result = await service.create(
+          plainToInstance(CreateOrderDto, {
+            items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+            couponCode: 'CHAOBAN',
+            pointsUsed: 15,
+          }),
+          7
+        );
+
+        expect(result.total).toBe(25000);
+        expect(result.discount).toBe(20000);
+        expect(result.pointDiscount).toBe(15000);
+        expect(result.pointsUsed).toBe(15);
+      });
+
+      it('ném lỗi BadRequestException khi khách vãng lai (không có userId) nhập pointsUsed', async () => {
+        await expect(
+          service.create(
+            plainToInstance(CreateOrderDto, {
+              items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+              pointsUsed: 10,
+            }),
+            undefined
+          )
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('ném lỗi BadRequestException khi số điểm yêu cầu vượt quá số điểm user đang có', async () => {
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 10 });
+
+        await expect(
+          service.create(
+            plainToInstance(CreateOrderDto, {
+              items: [{ productId: 12, size: 'M', toppings: [], quantity: 2 }],
+              pointsUsed: 30, // 30 > 10 điểm
+            }),
+            7
+          )
+        ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    describe('Trừ điểm đã dùng và cộng điểm mới khi thanh toán thành công (pay & webhook)', () => {
+      it('trừ pointsUsed và cộng điểm mới tích lũy trong OrdersService.pay', async () => {
+        mockPrisma.order.findUnique.mockResolvedValue({
+          id: 10,
+          userId: 7,
+          status: 'PENDING',
+          total: 50000,
+          pointsUsed: 15,
+        });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 50 });
+
+        const res = await service.pay(10, 'key-points-pay', { method: 'WALLET' });
+
+        // 50.000đ / 10.000 = 5 điểm tích lũy. Điểm mới: 50 - 15 + 5 = 40
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({
+          where: { id: 7 },
+          data: { loyaltyPoints: 40 },
+        });
+        expect(res.pointsUsed).toBe(15);
+        expect(res.loyaltyPointsEarned).toBe(5);
+      });
+
+      it('ném lỗi nếu tại thời điểm thanh toán user không còn đủ điểm (ví dụ đã tiêu ở đơn khác)', async () => {
+        mockPrisma.order.findUnique.mockResolvedValue({
+          id: 10,
+          userId: 7,
+          status: 'PENDING',
+          total: 50000,
+          pointsUsed: 30,
+        });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 10 }); // Chỉ còn 10 điểm
+
+        await expect(
+          service.pay(10, 'key-insufficient-points', { method: 'WALLET' })
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('trừ pointsUsed và cộng điểm mới trong OrdersService.processPaymentWebhook', async () => {
+        mockPrisma.order.findUnique.mockResolvedValue({
+          id: 10,
+          userId: 7,
+          status: 'PENDING',
+          total: 60000,
+          pointsUsed: 20,
+        });
+        mockPrisma.user.findUnique.mockResolvedValue({ id: 7, loyaltyPoints: 45 });
+
+        const res = await service.processPaymentWebhook({
+          transactionRef: 'TXN_POINTS_WEBHOOK',
+          orderId: 10,
+          amount: 60000,
+          status: 'SUCCESS',
+        });
+
+        // 60.000đ / 10.000 = 6 điểm tích lũy. Điểm mới: 45 - 20 + 6 = 31
+        expect(mockPrisma.user.update).toHaveBeenCalledWith({
+          where: { id: 7 },
+          data: { loyaltyPoints: 31 },
+        });
+        expect(res.pointsUsed).toBe(20);
+        expect(res.loyaltyPointsEarned).toBe(6);
+      });
+    });
+  });
+
 });
 
 describe('OrdersService - inventory control (transaction + optimistic locking)', () => {

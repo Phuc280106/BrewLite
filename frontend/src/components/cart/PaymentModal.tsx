@@ -30,6 +30,7 @@ export default function PaymentModal({
   subtotal,
 }: PaymentModalProps) {
   const user = useAuthStore((state) => state.user);
+  const updateLoyaltyPoints = useAuthStore((state) => state.updateLoyaltyPoints);
   const openAuthModal = useAuthStore((state) => state.openAuthModal);
   const clearCart = useCartStore((state) => state.clearCart);
 
@@ -43,6 +44,9 @@ export default function PaymentModal({
   const [availablePromotions, setAvailablePromotions] = useState<Promotion[]>([]);
   const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
+
+  // Điểm thưởng tích lũy (Loyalty Points)
+  const [pointsInput, setPointsInput] = useState<string>('');
 
   // Trạng thái phiên thanh toán
   const [isInitiating, setIsInitiating] = useState(false);
@@ -62,6 +66,8 @@ export default function PaymentModal({
     amount: number;
     methodTitle: string;
     loyaltyPointsEarned?: number;
+    pointsUsed?: number;
+    pointDiscount?: number;
     discount: number;
     couponCode?: string | null;
   } | null>(null);
@@ -122,7 +128,22 @@ export default function PaymentModal({
   }, [isOpen]);
 
   const discountAmount = appliedPromotion ? appliedPromotion.discount : 0;
-  const finalTotal = Math.max(0, subtotal - discountAmount);
+  const subtotalAfterCoupon = Math.max(0, subtotal - discountAmount);
+
+  // Tỉ lệ: 1 điểm = 1.000 VNĐ
+  const userPoints = user?.loyaltyPoints || 0;
+  const maxPointsCanUse = Math.min(
+    userPoints,
+    Math.floor(subtotalAfterCoupon / 1000)
+  );
+
+  const parsedPoints = parseInt(pointsInput, 10);
+  const pointsUsed =
+    !isNaN(parsedPoints) && parsedPoints > 0
+      ? Math.min(parsedPoints, maxPointsCanUse)
+      : 0;
+  const pointDiscount = pointsUsed * 1000;
+  const finalTotal = Math.max(0, subtotalAfterCoupon - pointDiscount);
 
   // Polling Realtime kiểm tra trạng thái đơn hàng khi đang ở màn hình chờ quét QR
   useEffect(() => {
@@ -147,16 +168,27 @@ export default function PaymentModal({
             pollingRef.current = null;
           }
 
+          const earned = Math.floor(res.data.total / 10000);
+          const used = res.data.pointsUsed ?? pointsUsed;
+
           setPaidResult({
             orderCode:
               res.data.orderCode ||
               `BL-${String(pendingOrderId).padStart(6, '0')}`,
             amount: res.data.total,
             methodTitle: getMethodTitle(selectedMethod),
-            loyaltyPointsEarned: Math.floor(res.data.total / 10000),
+            loyaltyPointsEarned: earned,
+            pointsUsed: used,
+            pointDiscount: res.data.pointDiscount ?? (used * 1000),
             discount: res.data.discount || discountAmount,
             couponCode: res.data.couponCode || appliedPromotion?.code,
           });
+
+          // Cập nhật điểm tích lũy trong store
+          if (user) {
+            const newPoints = Math.max(0, user.loyaltyPoints - used + earned);
+            updateLoyaltyPoints(newPoints);
+          }
 
           // Làm sạch giỏ hàng
           clearCart();
@@ -186,7 +218,17 @@ export default function PaymentModal({
         pollingRef.current = null;
       }
     };
-  }, [isAwaitingPayment, pendingOrderId, selectedMethod, discountAmount, appliedPromotion, clearCart]);
+  }, [
+    isAwaitingPayment,
+    pendingOrderId,
+    selectedMethod,
+    discountAmount,
+    pointsUsed,
+    user,
+    updateLoyaltyPoints,
+    appliedPromotion,
+    clearCart,
+  ]);
 
   if (!isOpen) return null;
 
@@ -207,10 +249,11 @@ export default function PaymentModal({
     setCouponError(null);
 
     try {
+      const userParam = user ? `&userId=${user.id}` : '';
       const res = await api.get<ValidatePromotionResponse>(
         `/orders/promotions/validate?code=${encodeURIComponent(
           cleanCode
-        )}&subtotal=${subtotal}`
+        )}&subtotal=${subtotal}${userParam}`
       );
       setAppliedPromotion(res.data);
       setCouponInput(cleanCode);
@@ -275,6 +318,7 @@ export default function PaymentModal({
             quantity,
           })),
           couponCode: appliedPromotion ? appliedPromotion.code : undefined,
+          pointsUsed: pointsUsed > 0 ? pointsUsed : undefined,
         });
 
         activeOrderId = orderRes.data.orderId;
@@ -335,17 +379,28 @@ export default function PaymentModal({
           pollingRef.current = null;
         }
 
+        const earned =
+          res.data.loyaltyPointsEarned ?? Math.floor(finalTotal / 10000);
+        const used = pointsUsed;
+
         setPaidResult({
           orderCode:
             pendingOrderCode ||
             `BL-${String(pendingOrderId).padStart(6, '0')}`,
           amount: paymentIntent?.amount || finalTotal,
           methodTitle: getMethodTitle(selectedMethod),
-          loyaltyPointsEarned:
-            res.data.loyaltyPointsEarned ?? Math.floor(finalTotal / 10000),
+          loyaltyPointsEarned: earned,
+          pointsUsed: used,
+          pointDiscount: used * 1000,
           discount: discountAmount,
           couponCode: appliedPromotion?.code,
         });
+
+        // Cập nhật điểm của người dùng trong state
+        if (user) {
+          const newPoints = Math.max(0, user.loyaltyPoints - used + earned);
+          updateLoyaltyPoints(newPoints);
+        }
 
         clearCart();
         setIsAwaitingPayment(false);
@@ -379,6 +434,7 @@ export default function PaymentModal({
     setPendingOrderCode(null);
     setAppliedPromotion(null);
     setCouponInput('');
+    setPointsInput('');
     setPaymentError(null);
     onClose();
   };
@@ -391,6 +447,7 @@ export default function PaymentModal({
     setIsAwaitingPayment(false);
     setIsSimulatingBank(false);
     setPaymentError(null);
+    setPointsInput('');
     onClose();
   };
 
@@ -458,6 +515,15 @@ export default function PaymentModal({
                   <span>Mã giảm giá đã dùng</span>
                   <span className="font-semibold">
                     {paidResult.couponCode} (-{formatMoney(paidResult.discount)})
+                  </span>
+                </div>
+              )}
+
+              {paidResult.pointsUsed != null && paidResult.pointsUsed > 0 && (
+                <div className="flex justify-between items-center text-amber-700 font-semibold bg-amber-50/60 p-2 rounded-xl border border-amber-200">
+                  <span>Điểm thưởng đã dùng</span>
+                  <span>
+                    -{paidResult.pointsUsed} điểm (-{formatMoney(paidResult.pointDiscount || paidResult.pointsUsed * 1000)})
                   </span>
                 </div>
               )}
@@ -829,6 +895,89 @@ export default function PaymentModal({
               )}
             </div>
 
+            {/* Khối Đổi điểm thưởng tích lũy (Loyalty Points) */}
+            <div className="space-y-2.5 pt-2 border-t border-stone-100">
+              <label className="text-xs font-bold uppercase tracking-wider text-stone-500 flex items-center justify-between">
+                <span>Điểm thưởng thành viên</span>
+                {user ? (
+                  <span className="text-amber-800 font-bold font-mono">
+                    Khả dụng: {user.loyaltyPoints.toLocaleString('vi-VN')} điểm
+                  </span>
+                ) : (
+                  <span className="text-stone-400 font-normal lowercase text-[11px]">
+                    Đăng nhập để đổi điểm
+                  </span>
+                )}
+              </label>
+
+              {user ? (
+                <div className="space-y-2">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="number"
+                      min={0}
+                      max={maxPointsCanUse}
+                      value={pointsInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '') {
+                          setPointsInput('');
+                          return;
+                        }
+                        const num = parseInt(val, 10);
+                        if (isNaN(num) || num < 0) {
+                          setPointsInput('0');
+                        } else if (num > maxPointsCanUse) {
+                          setPointsInput(String(maxPointsCanUse));
+                        } else {
+                          setPointsInput(String(num));
+                        }
+                      }}
+                      placeholder={`Nhập điểm muốn dùng (tối đa ${maxPointsCanUse})`}
+                      className="flex-1 px-3.5 py-2.5 rounded-2xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs sm:text-sm"
+                    />
+                    <button
+                      type="button"
+                      disabled={maxPointsCanUse <= 0}
+                      onClick={() => setPointsInput(String(maxPointsCanUse))}
+                      className="px-3 py-2.5 bg-amber-100 hover:bg-amber-200 disabled:opacity-40 text-amber-900 font-bold rounded-2xl text-xs transition-colors whitespace-nowrap"
+                    >
+                      Dùng tối đa
+                    </button>
+                    {pointsUsed > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPointsInput('')}
+                        className="px-2.5 py-2.5 text-stone-400 hover:text-stone-600 font-bold text-xs"
+                      >
+                        Xóa
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between items-center text-[11px] text-stone-500">
+                    <span>Tỉ lệ: 1 điểm = 1.000 ₫</span>
+                    {pointsUsed > 0 && (
+                      <span className="text-amber-700 font-semibold">
+                        Giảm thêm: -{formatMoney(pointDiscount)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 text-xs text-stone-600 flex justify-between items-center">
+                  <span>Đăng nhập tài khoản để tích lũy và sử dụng điểm thưởng.</span>
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login')}
+                    className="text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold underline ml-2 transition-colors"
+                  >
+                    Đăng nhập ngay
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Chi tiết tính tiền */}
             <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 space-y-2 text-xs sm:text-sm">
               <div className="flex justify-between items-center text-stone-500">
@@ -842,6 +991,13 @@ export default function PaymentModal({
                 <div className="flex justify-between items-center text-emerald-600 font-semibold">
                   <span>Khuyến mãi giảm trừ:</span>
                   <span>-{formatMoney(discountAmount)}</span>
+                </div>
+              )}
+
+              {pointDiscount > 0 && (
+                <div className="flex justify-between items-center text-amber-700 font-semibold">
+                  <span>Điểm thưởng giảm trừ ({pointsUsed} điểm):</span>
+                  <span>-{formatMoney(pointDiscount)}</span>
                 </div>
               )}
 
