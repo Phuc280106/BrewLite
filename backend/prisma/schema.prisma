@@ -65,9 +65,10 @@ model OrderItem {
   productId Int
   product   Product @relation(fields: [productId], references: [id])
 
-  size      String // "S", "M", "L"
-  price     Float // Đơn giá tại thời điểm mua (đã gồm size + topping)
-  qty       Int    @default(1)
+  size      String  // "S", "M", "L"
+  toppings  String? // JSON danh sách toppings đã chọn
+  price     Float   // Đơn giá tại thời điểm mua (đã gồm size + topping)
+  qty       Int     @default(1)
   lineTotal Float
 
   createdAt DateTime @default(now())
