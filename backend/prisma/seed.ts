@@ -15,7 +15,6 @@ async function main() {
       price: 25000,
       imageUrl:
         'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?w=500',
-      stock: 100,
     },
     {
       name: 'Americano Đá',
@@ -24,7 +23,6 @@ async function main() {
       price: 30000,
       imageUrl:
         'https://images.unsplash.com/photo-1551030173-122aabc4489c?w=500',
-      stock: 50,
     },
     {
       name: 'Bạc xỉu',
@@ -33,7 +31,6 @@ async function main() {
       price: 29000,
       imageUrl:
         'https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=500',
-      stock: 80,
     },
     {
       name: 'Trà đào cam sả',
@@ -43,7 +40,6 @@ async function main() {
       price: 40000,
       imageUrl:
         'https://images.unsplash.com/photo-1556679343-c7306c1976bc?w=500',
-      stock: 60,
     },
     {
       name: 'Matcha đá xay',
@@ -53,7 +49,6 @@ async function main() {
       price: 45000,
       imageUrl:
         'https://images.unsplash.com/photo-1570696587429-19ec024c6e6e?w=500',
-      stock: 40,
     },
     {
       name: 'Cappuccino Nóng',
@@ -63,7 +58,6 @@ async function main() {
       price: 35000,
       imageUrl:
         'https://images.unsplash.com/photo-1534687941688-6c9fa1265842?w=500',
-      stock: 30,
     },
   ];
   for (const product of products) {
@@ -99,6 +93,27 @@ async function main() {
     });
     if (!existingIngredient) {
       await prisma.ingredient.create({ data: ingredient });
+    }
+  }
+
+  // Seed Toppings
+  const toppings = [
+    { name: 'Trân châu đen', price: 5000, stock: 100 },
+    { name: 'Kem Macchiato', price: 10000, stock: 100 },
+    { name: 'Thạch đào giòn', price: 8000, stock: 100 },
+  ];
+  for (const topping of toppings) {
+    const existingTopping = await (prisma as any).topping.findFirst({
+      where: { name: topping.name },
+      select: { id: true },
+    });
+    if (!existingTopping) {
+      await (prisma as any).topping.create({ data: topping });
+    } else {
+      await (prisma as any).topping.update({
+        where: { id: existingTopping.id },
+        data: { stock: topping.stock },
+      });
     }
   }
 

@@ -27,7 +27,7 @@ function toProductItem(product: ProductResponse): ProductItem {
     name: product.name,
     note: product.description || 'Hương vị đồ uống tươi mới mỗi ngày',
     price: product.price,
-    stock: product.stock,
+    stock: product.stock ?? 99,
     category:
       product.category ||
       (product.name.toLowerCase().includes('trà') ? 'Tea & Fruit' : 'Coffee'),

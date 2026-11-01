@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service.js';
 import {
   SIZE_EXTRA_PRICE,
@@ -32,11 +33,23 @@ export class StockVersionConflictError extends Error {
   }
 }
 
+/**
+ * Được ném khi tồn kho nguyên liệu (Ingredient) bị giao dịch khác cập nhật
+ * (version/stock thay đổi) giữa lúc đọc và lúc ghi (Optimistic Locking).
+ */
+export class IngredientStockVersionConflictError extends Error {
+  constructor(readonly ingredientId: number) {
+    super(`Stock version conflict for ingredient ${ingredientId}`);
+    this.name = 'IngredientStockVersionConflictError';
+  }
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** P2034: Prisma báo write conflict / deadlock -> cũng an toàn để thử lại. */
 function isRetryable(error: unknown): boolean {
   if (error instanceof StockVersionConflictError) return true;
+  if (error instanceof IngredientStockVersionConflictError) return true;
   return (
     typeof error === 'object' &&
     error !== null &&
@@ -83,6 +96,169 @@ export class OrdersService {
     );
   }
 
+  /**
+   * Tính số ly tối đa dựa theo tồn kho nguyên liệu hiện tại.
+   * - Nếu truyền `size`: tính riêng cho size đó.
+   * - Nếu không truyền `size`: tính số ly tối đa có thể pha chế (lấy max giữa các size).
+   * - Nếu sản phẩm không có công thức: trả về tồn kho sản phẩm (product.stock).
+   */
+  async calculateProductAvailability(
+    productId: number,
+    size?: string,
+    tx?: Prisma.TransactionClient
+  ): Promise<number> {
+    const client = tx ?? this.prisma;
+    const product = await client.product.findUnique({
+      where: { id: productId },
+      include: {
+        recipeItems: {
+          include: {
+            ingredient: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} was not found`);
+    }
+
+    if (!product.recipeItems || product.recipeItems.length === 0) {
+      return 0;
+    }
+
+    if (size) {
+      const itemsForSize = product.recipeItems.filter(
+        (item) => item.size.toUpperCase() === size.toUpperCase()
+      );
+      if (itemsForSize.length === 0) {
+        return 0;
+      }
+
+      let maxCups = Infinity;
+      for (const item of itemsForSize) {
+        if (item.amount <= 0) continue;
+        const available = Math.floor(
+          (item.ingredient?.stock ?? 0) / item.amount
+        );
+        if (available < maxCups) {
+          maxCups = available;
+        }
+      }
+      return maxCups === Infinity ? 0 : maxCups;
+    }
+
+    const sizes = [...new Set(product.recipeItems.map((item) => item.size))];
+    if (sizes.length === 0) {
+      return 0;
+    }
+
+    let overallMax = 0;
+    for (const s of sizes) {
+      const itemsForSize = product.recipeItems.filter((item) => item.size === s);
+      let cupsForSize = Infinity;
+      for (const item of itemsForSize) {
+        if (item.amount <= 0) continue;
+        const available = Math.floor(
+          (item.ingredient?.stock ?? 0) / item.amount
+        );
+        if (available < cupsForSize) {
+          cupsForSize = available;
+        }
+      }
+      if (cupsForSize !== Infinity && cupsForSize > overallMax) {
+        overallMax = cupsForSize;
+      }
+    }
+
+    return overallMax;
+  }
+
+  /**
+   * Trả về chi tiết số ly tối đa của từng size cho sản phẩm.
+   */
+  async calculateProductAvailabilityDetails(
+    productId: number,
+    tx?: Prisma.TransactionClient
+  ): Promise<{ maxCups: number; bySize: Record<string, number> }> {
+    const client = tx ?? this.prisma;
+    const product = await client.product.findUnique({
+      where: { id: productId },
+      include: {
+        recipeItems: {
+          include: {
+            ingredient: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product ${productId} was not found`);
+    }
+
+    if (!product.recipeItems || product.recipeItems.length === 0) {
+      return {
+        maxCups: 0,
+        bySize: { S: 0, M: 0, L: 0 },
+      };
+    }
+
+    const sizes = [...new Set(product.recipeItems.map((item) => item.size))];
+    const bySize: Record<string, number> = {};
+    for (const s of sizes) {
+      const itemsForSize = product.recipeItems.filter((item) => item.size === s);
+      let cupsForSize = Infinity;
+      for (const item of itemsForSize) {
+        if (item.amount <= 0) continue;
+        const available = Math.floor(
+          (item.ingredient?.stock ?? 0) / item.amount
+        );
+        if (available < cupsForSize) {
+          cupsForSize = available;
+        }
+      }
+      bySize[s] = cupsForSize === Infinity ? 0 : cupsForSize;
+    }
+
+    const maxCups =
+      Object.keys(bySize).length > 0 ? Math.max(...Object.values(bySize)) : 0;
+    return { maxCups, bySize };
+  }
+
+  private resolveTopping(
+    key: string,
+    toppings: Array<{ id: number; name: string; price: number; stock: number }>
+  ) {
+  if (!toppings || toppings.length === 0) return null;
+
+  const numId = Number(key);
+  if (!Number.isNaN(numId) && Number.isInteger(numId)) {
+    const byId = toppings.find((t) => t.id === numId);
+    if (byId) return byId;
+  }
+
+  const slugKeywords: Record<string, string> = {
+    pearl: 'trân châu',
+    cheese: 'macchiato',
+    peach_jelly: 'thạch đào',
+  };
+  const keyword = slugKeywords[key.toLowerCase()];
+  if (keyword) {
+    const bySlug = toppings.find((t) =>
+      t.name.toLowerCase().includes(keyword)
+    );
+    if (bySlug) return bySlug;
+  }
+
+  const byName = toppings.find(
+    (t) => t.name.toLowerCase() === key.toLowerCase()
+  );
+  if (byName) return byName;
+
+  return null;
+}
+
   private createOnce(input: CreateOrderDto, userId?: number) {
     return this.prisma.$transaction(async (transaction) => {
       const productIds = [...new Set(input.items.map((item) => item.productId))];
@@ -91,65 +267,180 @@ export class OrdersService {
       });
       const productsById = new Map(products.map((product) => [product.id, product]));
 
-      const requestedQuantityByProductId = new Map<number, number>();
       for (const item of input.items) {
         const product = productsById.get(item.productId);
         if (!product) {
           throw new NotFoundException(`Product ${item.productId} was not found`);
         }
-
-        requestedQuantityByProductId.set(
-          item.productId,
-          (requestedQuantityByProductId.get(item.productId) ?? 0) + item.quantity
-        );
       }
 
-      // Kiểm tra sớm để trả lỗi rõ ràng (hết hàng thật, không phải tranh chấp).
-      for (const [productId, quantity] of requestedQuantityByProductId) {
-        const product = productsById.get(productId)!;
-        if (quantity > product.stock) {
+      // 1. Đọc công thức của các món trong giỏ hàng
+      const recipeItems = (transaction as any).recipeItem?.findMany
+        ? await (transaction as any).recipeItem.findMany({
+            where: { productId: { in: productIds } },
+          })
+        : [];
+
+      const recipesByKey = new Map<string, Array<{ ingredientId: number; amount: number }>>();
+      const productsWithRecipes = new Set<number>();
+      for (const r of recipeItems) {
+        productsWithRecipes.add(r.productId);
+        const key = `${r.productId}_${r.size.toUpperCase()}`;
+        if (!recipesByKey.has(key)) {
+          recipesByKey.set(key, []);
+        }
+        recipesByKey.get(key)!.push({
+          ingredientId: r.ingredientId,
+          amount: r.amount,
+        });
+      }
+
+      // 2. Tính tổng nguyên vật liệu tiêu hao
+      const totalIngredientRequirement = new Map<number, number>();
+
+      for (const item of input.items) {
+        const product = productsById.get(item.productId)!;
+        const key = `${item.productId}_${item.size.toUpperCase()}`;
+        const recipes = recipesByKey.get(key);
+
+        if (recipes && recipes.length > 0) {
+          for (const recipe of recipes) {
+            const totalNeeded = recipe.amount * item.quantity;
+            totalIngredientRequirement.set(
+              recipe.ingredientId,
+              (totalIngredientRequirement.get(recipe.ingredientId) ?? 0) + totalNeeded
+            );
+          }
+        } else if (productsWithRecipes.has(item.productId)) {
           throw new BadRequestException(
-            `Insufficient stock for product ${productId}`
+            `Không tìm thấy công thức pha chế cho món ${product.name} (Size ${item.size})`
           );
         }
       }
 
-      // Optimistic locking: chỉ trừ kho nếu version vẫn là giá trị vừa đọc.
-      // Sắp xếp theo id để mọi transaction khoá hàng theo cùng thứ tự tránh deadlock.
-      const sortedRequests = [...requestedQuantityByProductId].sort(
-        ([a], [b]) => a - b
-      );
-      for (const [productId, quantity] of sortedRequests) {
-        const product = productsById.get(productId)!;
-        const { count } = await transaction.product.updateMany({
-          where: {
-            id: productId,
-            version: product.version,
-            stock: { gte: quantity },
-          },
-          data: {
-            stock: { decrement: quantity },
-            version: { increment: 1 },
-          },
+      // 3. Trừ tồn kho nguyên vật liệu với Optimistic Locking trên bảng Ingredient
+      if (totalIngredientRequirement.size > 0) {
+        const ingredientIds = [...totalIngredientRequirement.keys()];
+        const ingredients = await (transaction as any).ingredient.findMany({
+          where: { id: { in: ingredientIds } },
         });
+        const ingredientsById = new Map<number, any>(
+          ingredients.map((ing: any) => [ing.id, ing])
+        );
 
-        if (count === 0) {
-          throw new StockVersionConflictError(productId);
+        // Kiểm tra sớm để trả lỗi 400 rõ ràng khi không đủ nguyên liệu
+        for (const [ingredientId, needed] of totalIngredientRequirement) {
+          const ingredient = ingredientsById.get(ingredientId);
+          if (!ingredient || ingredient.stock < needed) {
+            const ingName = ingredient?.name || `nguyên liệu #${ingredientId}`;
+            const currentStock = ingredient?.stock ?? 0;
+            const unit = ingredient?.unit ? ` ${ingredient.unit}` : '';
+            throw new BadRequestException(
+              `Không đủ nguyên liệu "${ingName}" để pha chế (Cần: ${needed}${unit}, Còn lại: ${currentStock}${unit})`
+            );
+          }
+        }
+
+        // Optimistic locking trên bảng Ingredient
+        const sortedIngredientRequests = [...totalIngredientRequirement.entries()].sort(
+          ([a], [b]) => a - b
+        );
+
+        for (const [ingredientId, needed] of sortedIngredientRequests) {
+          const ingredient = ingredientsById.get(ingredientId)!;
+          const { count } = await (transaction as any).ingredient.updateMany({
+            where: {
+              id: ingredientId,
+              version: ingredient.version,
+              stock: { gte: needed },
+            },
+            data: {
+              stock: { decrement: needed },
+              version: { increment: 1 },
+            },
+          });
+
+          if (count === 0) {
+            throw new IngredientStockVersionConflictError(ingredientId);
+          }
+        }
+      }
+
+      // 4. Kiểm tra và trừ tồn kho Topping
+      const dbToppings: Array<{ id: number; name: string; price: number; stock: number }> =
+        (transaction as any).topping?.findMany
+          ? await (transaction as any).topping.findMany()
+          : [];
+
+      const totalToppingRequirement = new Map<number, { topping: any; needed: number }>();
+
+      for (const item of input.items) {
+        if (!item.toppings || item.toppings.length === 0) continue;
+        for (const toppingKey of item.toppings) {
+          const matched = this.resolveTopping(toppingKey, dbToppings);
+          if (matched) {
+            const current = totalToppingRequirement.get(matched.id) ?? {
+              topping: matched,
+              needed: 0,
+            };
+            current.needed += item.quantity;
+            totalToppingRequirement.set(matched.id, current);
+          } else if (dbToppings.length > 0) {
+            throw new BadRequestException(
+              `Topping không tồn tại hoặc không hợp lệ: ${toppingKey}`
+            );
+          }
+        }
+      }
+
+      // Kiểm tra sớm tồn kho Topping
+      for (const [, { topping, needed }] of totalToppingRequirement) {
+        if (topping.stock < needed) {
+          throw new BadRequestException(
+            `Topping "${topping.name}" không đủ số lượng phục vụ (Cần: ${needed}, Còn lại: ${topping.stock})`
+          );
+        }
+      }
+
+      // Trừ tồn kho Topping trong transaction
+      if (totalToppingRequirement.size > 0 && (transaction as any).topping?.updateMany) {
+        const sortedToppings = [...totalToppingRequirement.entries()].sort(([a], [b]) => a - b);
+        for (const [toppingId, { topping, needed }] of sortedToppings) {
+          const { count } = await (transaction as any).topping.updateMany({
+            where: {
+              id: toppingId,
+              stock: { gte: needed },
+            },
+            data: {
+              stock: { decrement: needed },
+            },
+          });
+
+          if (count === 0) {
+            throw new BadRequestException(
+              `Topping "${topping.name}" đã hết hàng hoặc không đủ tồn kho để đặt đơn này`
+            );
+          }
         }
       }
 
       const orderItems = input.items.map((item) => {
         const product = productsById.get(item.productId)!;
-        const toppingsPrice = item.toppings.reduce(
-          (total, topping) => total + TOPPING_PRICE[topping],
-          0
-        );
+        const toppingsPrice = item.toppings.reduce((total, toppingKey) => {
+          const matched = this.resolveTopping(toppingKey, dbToppings);
+          return total + (matched?.price ?? TOPPING_PRICE[toppingKey] ?? 0);
+        }, 0);
         const price = product.price + SIZE_EXTRA_PRICE[item.size] + toppingsPrice;
+
+        const resolvedToppingNames = item.toppings.map((t) => {
+          const matched = this.resolveTopping(t, dbToppings);
+          return matched ? matched.name : t;
+        });
 
         return {
           productId: item.productId,
           size: item.size,
-          toppings: item.toppings.length > 0 ? JSON.stringify(item.toppings) : null,
+          toppings: item.toppings.length > 0 ? JSON.stringify(resolvedToppingNames) : null,
           price,
           qty: item.quantity,
           lineTotal: price * item.quantity,

@@ -39,9 +39,15 @@ export const useCartStore = create<CartStore>()(
 
           if (existingIndex > -1) {
             const cart = [...state.cart];
+            const maxStock = cart[existingIndex].maxStock ?? options.product.stock ?? 99;
+            const newQty = Math.min(
+              maxStock,
+              cart[existingIndex].quantity + options.quantity
+            );
             cart[existingIndex] = {
               ...cart[existingIndex],
-              quantity: cart[existingIndex].quantity + options.quantity,
+              quantity: newQty,
+              maxStock,
             };
             return { cart, ordered: false };
           }
@@ -58,6 +64,7 @@ export const useCartStore = create<CartStore>()(
                 toppings,
                 unitPrice: options.unitPrice,
                 quantity: options.quantity,
+                maxStock: options.product.stock ?? 99,
               },
             ],
             ordered: false,
@@ -70,18 +77,36 @@ export const useCartStore = create<CartStore>()(
         if (toastTimeout) clearTimeout(toastTimeout);
         toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);
       },
-      updateQuantity: (cartItemId, change) =>
+      updateQuantity: (cartItemId, change) => {
+        let reachedLimit = false;
+        let limitVal = 0;
+
         set((state) => ({
           cart: state.cart
             .map((item) => {
               if (item.cartItemId !== cartItemId) return item;
+              const maxStock = item.maxStock ?? 99;
+              if (change > 0 && item.quantity >= maxStock) {
+                reachedLimit = true;
+                limitVal = maxStock;
+                return item;
+              }
               const nextQuantity = item.quantity + change;
               return nextQuantity > 0
                 ? { ...item, quantity: nextQuantity }
                 : null;
             })
             .filter((item): item is CartItem => item !== null),
-        })),
+        }));
+
+        if (reachedLimit) {
+          set({
+            toastMessage: `Đã đạt số ly tối đa có thể pha chế (${limitVal} ly)!`,
+          });
+          if (toastTimeout) clearTimeout(toastTimeout);
+          toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);
+        }
+      },
       completeCheckout: () => set({ ordered: true, cart: [] }),
       clearCart: () => set({ cart: [] }),
     }),

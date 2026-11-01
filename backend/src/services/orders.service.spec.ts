@@ -92,7 +92,7 @@ describe('OrdersService', () => {
     const transaction = {
       product: {
         findMany: vi.fn().mockResolvedValue([
-          { id: 12, stock: 10, price: 25000, version: 0 },
+          { id: 12, price: 25000 },
         ]),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
@@ -638,19 +638,21 @@ describe('OrdersService', () => {
 
 });
 
-describe('OrdersService - inventory control (transaction + optimistic locking)', () => {
-  type FakeProduct = { id: number; stock: number; price: number; version: number };
- 
-  /**
-   * DB giả lập trong bộ nhớ: updateMany là nguyên tử (như UPDATE ... WHERE của
-   * Postgres), còn findMany nhường event loop để các request đồng thời thực sự
-   * xen kẽ giữa bước "đọc" và bước "ghi". Transaction thất bại sẽ được rollback.
-   */
-  function createFakeDb(initial: FakeProduct[]) {
-    const products = new Map(initial.map((p) => [p.id, { ...p }]));
+describe('OrdersService - inventory control on Ingredient (transaction + optimistic locking)', () => {
+  type FakeIngredient = { id: number; name: string; unit: string; stock: number; version: number };
+  type FakeProduct = { id: number; price: number };
+  type FakeRecipe = { productId: number; ingredientId: number; size: string; amount: number };
+
+  function createFakeDb(
+    initialIngredients: FakeIngredient[],
+    initialProducts: FakeProduct[] = [{ id: 1, price: 25000 }],
+    recipes: FakeRecipe[] = [{ productId: 1, ingredientId: 1, size: 'S', amount: 1 }]
+  ) {
+    const ingredients = new Map(initialIngredients.map((i) => [i.id, { ...i }]));
+    const products = new Map(initialProducts.map((p) => [p.id, { ...p }]));
     let orderSeq = 0;
     const orders: unknown[] = [];
- 
+
     const prisma = {
       $transaction: async (
         callback: (tx: Prisma.TransactionClient) => Promise<unknown>
@@ -660,10 +662,23 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
         const tx = {
           product: {
             findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
-              const snapshot = where.id.in
+              return where.id.in
                 .map((id) => products.get(id))
                 .filter((p): p is FakeProduct => Boolean(p))
                 .map((p) => ({ ...p }));
+            },
+          },
+          recipeItem: {
+            findMany: async ({ where }: { where: { productId: { in: number[] } } }) => {
+              return recipes.filter((r) => where.productId.in.includes(r.productId));
+            },
+          },
+          ingredient: {
+            findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
+              const snapshot = where.id.in
+                .map((id) => ingredients.get(id))
+                .filter((i): i is FakeIngredient => Boolean(i))
+                .map((i) => ({ ...i }));
               await new Promise((resolve) => setImmediate(resolve));
               return snapshot;
             },
@@ -677,14 +692,14 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
                 version: { increment: number };
               };
             }) => {
-              const p = products.get(where.id);
-              if (!p || p.version !== where.version || p.stock < where.stock.gte) {
+              const ing = ingredients.get(where.id);
+              if (!ing || ing.version !== where.version || ing.stock < where.stock.gte) {
                 return { count: 0 };
               }
-              const before = { ...p };
-              p.stock -= data.stock.decrement;
-              p.version += data.version.increment;
-              undo.push(() => products.set(before.id, before));
+              const before = { ...ing };
+              ing.stock -= data.stock.decrement;
+              ing.version += data.version.increment;
+              undo.push(() => ingredients.set(before.id, before));
               return { count: 1 };
             },
           },
@@ -701,7 +716,7 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
             },
           },
         } as unknown as Prisma.TransactionClient;
- 
+
         try {
           const result = await callback(tx);
           orders.push(...pendingOrders);
@@ -712,59 +727,66 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
         }
       },
     } as unknown as PrismaService;
- 
-    return { prisma, products, orders };
+
+    return { prisma, ingredients, products, orders };
   }
- 
+
   const makeDto = (productId: number, quantity: number) =>
     plainToInstance(CreateOrderDto, {
       items: [{ productId, size: 'S', toppings: [], quantity }],
     });
- 
-  it('decrements stock and bumps version when an order is created', async () => {
-    const db = createFakeDb([{ id: 1, stock: 10, price: 25000, version: 0 }]);
+
+  it('decrements ingredient stock and bumps version when an order is created', async () => {
+    const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
     const service = new OrdersService(db.prisma);
- 
+
     await service.create(makeDto(1, 3));
- 
-    expect(db.products.get(1)).toMatchObject({ stock: 7, version: 1 });
+
+    expect(db.ingredients.get(1)).toMatchObject({ stock: 7, version: 1 });
   });
- 
+
   it('never oversells when many customers order at the same time', async () => {
-    // 10 ly còn lại, 25 khách cùng đặt 1 ly -> đúng 10 đơn thành công.
-    const db = createFakeDb([{ id: 1, stock: 10, price: 25000, version: 0 }]);
+    // 10 đơn vị nguyên liệu còn lại, 25 khách cùng đặt 1 ly -> đúng 10 đơn thành công.
+    const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
     const service = new OrdersService(db.prisma);
- 
+
     const results = await Promise.allSettled(
       Array.from({ length: 25 }, () => service.create(makeDto(1, 1)))
     );
- 
+
     const succeeded = results.filter((r) => r.status === 'fulfilled');
     const failed = results.filter(
       (r): r is PromiseRejectedResult => r.status === 'rejected'
     );
- 
+
     expect(succeeded).toHaveLength(10);
     expect(failed).toHaveLength(15);
     for (const failure of failed) {
-      // Hết hàng thật (400) hoặc tranh chấp quá nhiều (409) - không phải lỗi lạ.
       expect([BadRequestException, ConflictException]).toContainEqual(
         failure.reason.constructor
       );
     }
-    expect(db.products.get(1)!.stock).toBe(0);
+    expect(db.ingredients.get(1)!.stock).toBe(0);
     expect(db.orders).toHaveLength(10);
   });
- 
-  it('rolls back earlier stock deductions when a later product conflicts', async () => {
-    const db = createFakeDb([
-      { id: 1, stock: 5, price: 25000, version: 0 },
-      { id: 2, stock: 1, price: 30000, version: 0 },
-    ]);
+
+  it('rolls back earlier ingredient deductions when a later ingredient conflicts', async () => {
+    const db = createFakeDb(
+      [
+        { id: 1, name: 'Cà phê', unit: 'g', stock: 5, version: 0 },
+        { id: 2, name: 'Sữa đặc', unit: 'ml', stock: 1, version: 0 },
+      ],
+      [
+        { id: 1, price: 25000 },
+        { id: 2, price: 30000 },
+      ],
+      [
+        { productId: 1, ingredientId: 1, size: 'S', amount: 1 },
+        { productId: 2, ingredientId: 2, size: 'S', amount: 1 },
+      ]
+    );
     const service = new OrdersService(db.prisma);
- 
-    // Đơn A lấy hết sản phẩm 2; đơn B cần cả 1 và 2 -> B phải thất bại và
-    // không được để lại phần kho đã trừ của sản phẩm 1.
+
     const orderA = service.create(makeDto(2, 1));
     const orderB = service.create(
       plainToInstance(CreateOrderDto, {
@@ -775,29 +797,33 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
       })
     );
     const [a, b] = await Promise.allSettled([orderA, orderB]);
- 
+
     expect(a.status).toBe('fulfilled');
     expect(b.status).toBe('rejected');
-    expect(db.products.get(1)!.stock).toBe(5);
-    expect(db.products.get(2)!.stock).toBe(0);
+    expect(db.ingredients.get(1)!.stock).toBe(5);
+    expect(db.ingredients.get(2)!.stock).toBe(0);
   });
- 
-  it('rejects with 400 when requested quantity exceeds stock', async () => {
-    const db = createFakeDb([{ id: 1, stock: 2, price: 25000, version: 0 }]);
+
+  it('rejects with 400 when requested quantity exceeds ingredient stock', async () => {
+    const db = createFakeDb([{ id: 1, name: 'Cà phê', unit: 'g', stock: 2, version: 0 }]);
     const service = new OrdersService(db.prisma);
- 
+
     await expect(service.create(makeDto(1, 3))).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(db.products.get(1)).toMatchObject({ stock: 2, version: 0 });
+    expect(db.ingredients.get(1)).toMatchObject({ stock: 2, version: 0 });
   });
- 
-  it('gives up with 409 after too many version conflicts', async () => {
+
+  it('gives up with 409 after too many version conflicts on ingredient', async () => {
     const tx = {
       product: {
-        findMany: vi
-          .fn()
-          .mockResolvedValue([{ id: 1, stock: 10, price: 25000, version: 0 }]),
+        findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
+      },
+      recipeItem: {
+        findMany: vi.fn().mockResolvedValue([{ productId: 1, ingredientId: 1, size: 'S', amount: 1 }]),
+      },
+      ingredient: {
+        findMany: vi.fn().mockResolvedValue([{ id: 1, name: 'Cà phê', stock: 10, version: 0 }]),
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       order: { create: vi.fn() },
@@ -808,10 +834,313 @@ describe('OrdersService - inventory control (transaction + optimistic locking)',
       ),
     } as unknown as PrismaService;
     const service = new OrdersService(prisma);
- 
+
     await expect(service.create(makeDto(1, 1))).rejects.toBeInstanceOf(
       ConflictException
     );
     expect(prisma.$transaction).toHaveBeenCalledTimes(MAX_ORDER_ATTEMPTS);
+  });
+});
+
+describe('OrdersService - calculateProductAvailability & Ingredient optimistic locking', () => {
+  type FakeIngredient = { id: number; name: string; unit: string; stock: number; version: number };
+  type FakeRecipeItem = { productId: number; ingredientId: number; size: string; amount: number };
+
+  it('calculateProductAvailability: ném NotFoundException khi sản phẩm không tồn tại', async () => {
+    const prisma = {
+      product: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+    } as unknown as PrismaService;
+
+    const service = new OrdersService(prisma);
+    await expect(service.calculateProductAvailability(999)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('calculateProductAvailability: trả về 0 nếu sản phẩm không có công thức', async () => {
+    const prisma = {
+      product: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 5,
+          name: 'Croissant',
+          recipeItems: [],
+        }),
+      },
+    } as unknown as PrismaService;
+
+    const service = new OrdersService(prisma);
+    const availability = await service.calculateProductAvailability(5);
+    expect(availability).toBe(0);
+  });
+
+  it('calculateProductAvailability: tính chính xác số ly theo công thức và tồn kho nguyên liệu', async () => {
+    // Cà phê Robusta: 60g, Sữa đặc: 100ml
+    // Size S: Cà phê 20g, Sữa 30ml -> Robusta: 60/20 = 3 ly, Sữa: 100/30 = 3 ly -> Min: 3 ly
+    // Size M: Cà phê 25g, Sữa 40ml -> Robusta: 60/25 = 2 ly, Sữa: 100/40 = 2 ly -> Min: 2 ly
+    // Size L: Cà phê 30g, Sữa 50ml -> Robusta: 60/30 = 2 ly, Sữa: 100/50 = 2 ly -> Min: 2 ly
+    const mockProductWithRecipes = {
+      id: 1,
+      name: 'Cà phê sữa đá',
+      stock: 100,
+      recipeItems: [
+        { productId: 1, size: 'S', amount: 20, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
+        { productId: 1, size: 'S', amount: 30, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
+        { productId: 1, size: 'M', amount: 25, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
+        { productId: 1, size: 'M', amount: 40, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
+        { productId: 1, size: 'L', amount: 30, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
+        { productId: 1, size: 'L', amount: 50, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
+      ],
+    };
+
+    const prisma = {
+      product: {
+        findUnique: vi.fn().mockResolvedValue(mockProductWithRecipes),
+      },
+    } as unknown as PrismaService;
+
+    const service = new OrdersService(prisma);
+
+    // Tính cho size cụ thể
+    const sizeS = await service.calculateProductAvailability(1, 'S');
+    expect(sizeS).toBe(3);
+
+    const sizeM = await service.calculateProductAvailability(1, 'M');
+    expect(sizeM).toBe(2);
+
+    const sizeL = await service.calculateProductAvailability(1, 'L');
+    expect(sizeL).toBe(2);
+
+    // Khi không truyền size: lấy số ly tối đa có thể pha chế (Max giữa các size = 3)
+    const maxOverall = await service.calculateProductAvailability(1);
+    expect(maxOverall).toBe(3);
+
+    // Chi tiết từng size
+    const details = await service.calculateProductAvailabilityDetails(1);
+    expect(details).toEqual({
+      maxCups: 3,
+      bySize: { S: 3, M: 2, L: 2 },
+    });
+  });
+
+  it('createOnce: trừ tồn kho nguyên vật liệu với optimistic locking trên Ingredient', async () => {
+    const ingredients = new Map<number, FakeIngredient>([
+      [101, { id: 101, name: 'Cà phê Robusta', unit: 'g', stock: 100, version: 0 }],
+      [102, { id: 102, name: 'Sữa đặc', unit: 'ml', stock: 200, version: 0 }],
+    ]);
+
+    const recipeItems: FakeRecipeItem[] = [
+      { productId: 1, ingredientId: 101, size: 'M', amount: 25 },
+      { productId: 1, ingredientId: 102, size: 'M', amount: 40 },
+    ];
+
+    const prisma = {
+      $transaction: async (cb: (tx: any) => Promise<unknown>) => {
+        const tx = {
+          product: {
+            findMany: vi.fn().mockResolvedValue([
+              { id: 1, name: 'Cà phê sữa đá', price: 25000, stock: 100, version: 0 },
+            ]),
+          },
+          recipeItem: {
+            findMany: vi.fn().mockResolvedValue(recipeItems),
+          },
+          ingredient: {
+            findMany: vi.fn().mockImplementation(async ({ where }) => {
+              return where.id.in.map((id: number) => ({ ...ingredients.get(id) }));
+            }),
+            updateMany: vi.fn().mockImplementation(async ({ where, data }) => {
+              const ing = ingredients.get(where.id);
+              if (!ing || ing.version !== where.version || ing.stock < where.stock.gte) {
+                return { count: 0 };
+              }
+              ing.stock -= data.stock.decrement;
+              ing.version += data.version.increment;
+              return { count: 1 };
+            }),
+          },
+          order: {
+            create: vi.fn().mockResolvedValue({
+              id: 99,
+              total: 60000,
+              discount: 0,
+              couponCode: null,
+              status: 'PENDING',
+              createdAt: new Date(),
+            }),
+          },
+        };
+        return cb(tx);
+      },
+    } as unknown as PrismaService;
+
+    const service = new OrdersService(prisma);
+
+    // Đặt 2 ly size M:
+    // Tiêu hao: Robusta = 25 * 2 = 50g, Sữa đặc = 40 * 2 = 80ml
+    const result = await service.create(
+      plainToInstance(CreateOrderDto, {
+        items: [{ productId: 1, size: 'M', toppings: [], quantity: 2 }],
+      })
+    );
+
+    expect(result.orderId).toBe(99);
+    expect(ingredients.get(101)).toMatchObject({ stock: 50, version: 1 });
+    expect(ingredients.get(102)).toMatchObject({ stock: 120, version: 1 });
+  });
+
+  it('createOnce: ném BadRequestException khi tồn kho nguyên liệu không đủ', async () => {
+    const ingredients = new Map<number, FakeIngredient>([
+      [101, { id: 101, name: 'Cà phê Robusta', unit: 'g', stock: 20, version: 0 }], // chỉ có 20g
+      [102, { id: 102, name: 'Sữa đặc', unit: 'ml', stock: 200, version: 0 }],
+    ]);
+
+    const recipeItems: FakeRecipeItem[] = [
+      { productId: 1, ingredientId: 101, size: 'M', amount: 25 },
+      { productId: 1, ingredientId: 102, size: 'M', amount: 40 },
+    ];
+
+    const prisma = {
+      $transaction: async (cb: (tx: any) => Promise<unknown>) => {
+        const tx = {
+          product: {
+            findMany: vi.fn().mockResolvedValue([
+              { id: 1, name: 'Cà phê sữa đá', price: 25000, stock: 100, version: 0 },
+            ]),
+          },
+          recipeItem: {
+            findMany: vi.fn().mockResolvedValue(recipeItems),
+          },
+          ingredient: {
+            findMany: vi.fn().mockImplementation(async ({ where }) => {
+              return where.id.in.map((id: number) => ({ ...ingredients.get(id) }));
+            }),
+          },
+        };
+        return cb(tx);
+      },
+    } as unknown as PrismaService;
+
+    const service = new OrdersService(prisma);
+
+    // Cần 25g mà chỉ có 20g -> Ném BadRequestException
+    await expect(
+      service.create(
+        plainToInstance(CreateOrderDto, {
+          items: [{ productId: 1, size: 'M', toppings: [], quantity: 1 }],
+        })
+      )
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  describe('Topping inventory management', () => {
+    it('deducts topping stock atomically when order includes toppings', async () => {
+      const toppingUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+      const orderCreate = vi.fn().mockResolvedValue({
+        id: 101,
+        total: 70000,
+        discount: 0,
+        couponCode: null,
+        status: 'PENDING',
+        createdAt: new Date(),
+      });
+
+      const prisma = {
+        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
+          const tx = {
+            product: {
+              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
+            },
+            recipeItem: {
+              findMany: vi.fn().mockResolvedValue([]),
+            },
+            topping: {
+              findMany: vi.fn().mockResolvedValue([
+                { id: 1, name: 'Trân châu đen', price: 5000, stock: 50 },
+              ]),
+              updateMany: toppingUpdateMany,
+            },
+            order: { create: orderCreate },
+          };
+          return cb(tx);
+        },
+      } as unknown as PrismaService;
+
+      const service = new OrdersService(prisma);
+      const result = await service.create(
+        plainToInstance(CreateOrderDto, {
+          items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
+        })
+      );
+
+      expect(toppingUpdateMany).toHaveBeenCalledWith({
+        where: { id: 1, stock: { gte: 2 } },
+        data: { stock: { decrement: 2 } },
+      });
+      expect(result.orderId).toBe(101);
+    });
+
+    it('throws BadRequestException when topping stock is insufficient', async () => {
+      const prisma = {
+        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
+          const tx = {
+            product: {
+              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
+            },
+            recipeItem: {
+              findMany: vi.fn().mockResolvedValue([]),
+            },
+            topping: {
+              findMany: vi.fn().mockResolvedValue([
+                { id: 1, name: 'Trân châu đen', price: 5000, stock: 1 },
+              ]),
+              updateMany: vi.fn(),
+            },
+          };
+          return cb(tx);
+        },
+      } as unknown as PrismaService;
+
+      const service = new OrdersService(prisma);
+
+      await expect(
+        service.create(
+          plainToInstance(CreateOrderDto, {
+            items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
+          })
+        )
+      ).rejects.toThrowError(/không đủ số lượng phục vụ/);
+    });
+
+    it('throws BadRequestException when topping updateMany returns count 0 (race condition)', async () => {
+      const prisma = {
+        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
+          const tx = {
+            product: {
+              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
+            },
+            recipeItem: {
+              findMany: vi.fn().mockResolvedValue([]),
+            },
+            topping: {
+              findMany: vi.fn().mockResolvedValue([
+                { id: 1, name: 'Trân châu đen', price: 5000, stock: 10 },
+              ]),
+              updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+            },
+          };
+          return cb(tx);
+        },
+      } as unknown as PrismaService;
+
+      const service = new OrdersService(prisma);
+
+      await expect(
+        service.create(
+          plainToInstance(CreateOrderDto, {
+            items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
+          })
+        )
+      ).rejects.toThrowError(/đã hết hàng hoặc không đủ tồn kho/);
+    });
   });
 });

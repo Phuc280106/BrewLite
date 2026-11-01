@@ -8,7 +8,8 @@ import { useOptionsStore } from './useOptionsStore';
 export default function useProductOptions(
   product: ProductItem | null,
   onAddToCart: (options: CartItemOptions) => void,
-  onClose: () => void
+  onClose: () => void,
+  currentStock?: number
 ) {
   const sizes = useOptionsStore((state) => state.sizes);
   const toppings = useOptionsStore((state) => state.toppings);
@@ -21,6 +22,25 @@ export default function useProductOptions(
   const [selectedSize, setSelectedSize] = useState<ProductSize>('M');
   const [selectedToppings, setSelectedToppings] = useState<string[]>([]);
   const [quantity, setQuantity] = useState(1);
+
+  const maxToppingStock = selectedToppings.reduce((min, toppingId) => {
+    const topping = toppings.find((item) => item.id === toppingId);
+    if (topping && topping.stock !== undefined) {
+      return Math.min(min, topping.stock);
+    }
+    return min;
+  }, Infinity);
+
+  // Tự động điều chỉnh số lượng nếu vượt quá tồn kho pha chế khả dụng hoặc tồn kho topping đã chọn
+  useEffect(() => {
+    const effectiveStock = Math.min(
+      currentStock ?? Infinity,
+      maxToppingStock
+    );
+    if (effectiveStock < Infinity && effectiveStock > 0 && quantity > effectiveStock) {
+      setQuantity(effectiveStock);
+    }
+  }, [currentStock, maxToppingStock, quantity]);
 
   const sizeExtra =
     sizes.find((size) => size.id === selectedSize)?.extraPrice ?? 0;
@@ -61,8 +81,14 @@ export default function useProductOptions(
     toggleTopping,
     quantity,
     decreaseQuantity: () => setQuantity((current) => Math.max(1, current - 1)),
-    increaseQuantity: (stock: number) =>
-      setQuantity((current) => Math.min(stock, current + 1)),
+    increaseQuantity: (stockLimit?: number) => {
+      const baseLimit = stockLimit ?? currentStock ?? product?.stock ?? 99;
+      const effectiveLimit = Math.min(baseLimit, maxToppingStock === Infinity ? 99 : maxToppingStock);
+      setQuantity((current) => {
+        if (current >= effectiveLimit) return current;
+        return current + 1;
+      });
+    },
     unitPrice,
     totalPrice,
     confirm,

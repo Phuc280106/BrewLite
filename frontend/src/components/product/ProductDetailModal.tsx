@@ -44,24 +44,41 @@ function ProductDetailDialog({
 }: ProductDetailDialogProps) {
   const [product, setProduct] = useState<ProductItem>(initialProduct);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [availabilityBySize, setAvailabilityBySize] = useState<Record<string, number> | null>(null);
+  const [maxAvailability, setMaxAvailability] = useState<number | null>(null);
 
-  // Gọi API GET /products/:id để lấy dữ liệu tồn kho và giá mới nhất từ CSDL
+  // Gọi API GET /products/:id và GET /orders/availability/:id để lấy dữ liệu tồn kho nguyên liệu mới nhất
   useEffect(() => {
     let isMounted = true;
     async function fetchDetail() {
       try {
         setIsRefreshing(true);
-        const res = await api.get<ProductResponse>(`/products/${initialProduct.id}`);
-        if (res.data && isMounted) {
+        const [prodRes, availRes] = await Promise.allSettled([
+          api.get<ProductResponse>(`/products/${initialProduct.id}`),
+          api.get<{ productId: number; maxCups: number; availability: number; bySize?: Record<string, number> }>(
+            `/orders/availability/${initialProduct.id}`
+          ),
+        ]);
+
+        if (prodRes.status === 'fulfilled' && prodRes.value.data && isMounted) {
+          const data = prodRes.value.data;
           setProduct((prev) => ({
             ...prev,
-            name: res.data.name || prev.name,
-            price: res.data.price ?? prev.price,
-            stock: res.data.stock ?? prev.stock,
-            note: res.data.description || prev.note,
-            image: res.data.imageUrl || prev.image,
-            category: res.data.category || prev.category,
+            name: data.name || prev.name,
+            price: data.price ?? prev.price,
+            stock: data.stock ?? prev.stock,
+            note: data.description || prev.note,
+            image: data.imageUrl || prev.image,
+            category: data.category || prev.category,
           }));
+        }
+
+        if (availRes.status === 'fulfilled' && availRes.value.data && isMounted) {
+          const avail = availRes.value.data;
+          setMaxAvailability(avail.availability ?? avail.maxCups ?? null);
+          if (avail.bySize) {
+            setAvailabilityBySize(avail.bySize);
+          }
         }
       } catch (err) {
         console.warn(`Lỗi lấy chi tiết sản phẩm ${initialProduct.id}:`, err);
@@ -76,6 +93,12 @@ function ProductDetailDialog({
     };
   }, [initialProduct.id]);
 
+  const [provisionalSize, setProvisionalSize] = useState<string>('M');
+  const currentSizeAvailability =
+    availabilityBySize && provisionalSize in availabilityBySize
+      ? availabilityBySize[provisionalSize]
+      : (maxAvailability ?? product.stock ?? 99);
+
   const {
     sizes,
     toppings,
@@ -88,7 +111,12 @@ function ProductDetailDialog({
     increaseQuantity,
     totalPrice,
     confirm,
-  } = useProductOptions(product, onAddToCart, onClose);
+  } = useProductOptions(product, onAddToCart, onClose, currentSizeAvailability);
+
+  // Đồng bộ provisionalSize với selectedSize
+  useEffect(() => {
+    setProvisionalSize(selectedSize);
+  }, [selectedSize]);
 
   const formatMoney = (value: number) => `${value.toLocaleString('vi-VN')} ₫`;
 
@@ -134,17 +162,30 @@ function ProductDetailDialog({
             <p className="text-xs text-stone-500 mt-1 leading-relaxed">
               {product.note}
             </p>
-            <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex items-center gap-2 mt-2">
               <span
-                className={`text-[11px] font-medium ${
-                  product.stock > 0 ? 'text-emerald-700' : 'text-rose-600'
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
+                  currentSizeAvailability > 0
+                    ? currentSizeAvailability <= 5
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-rose-100 text-rose-800 border border-rose-300'
                 }`}
               >
-                ● {product.stock > 0 ? `Còn lại: ${product.stock} ly` : 'Tạm thời hết hàng'}
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    currentSizeAvailability > 0 ? 'bg-amber-500 animate-pulse' : 'bg-rose-500'
+                  }`}
+                />
+                {currentSizeAvailability > 0
+                  ? currentSizeAvailability <= 5
+                    ? `Chỉ còn nguyên liệu làm ${currentSizeAvailability} ly`
+                    : `Còn nguyên liệu làm ${currentSizeAvailability} ly`
+                  : `Tạm thời hết hàng (Không đủ nguyên liệu)`}
               </span>
               {isRefreshing && (
                 <span className="text-[10px] text-stone-400 italic">
-                  (đang cập nhật...)
+                  (đang kiểm tra kho...)
                 </span>
               )}
             </div>
@@ -156,11 +197,14 @@ function ProductDetailDialog({
             sizes={sizes}
             toppings={toppings}
             selectedSize={selectedSize}
-            onSelectSize={setSelectedSize}
+            onSelectSize={(size) => {
+              setProvisionalSize(size);
+              setSelectedSize(size);
+            }}
             selectedToppings={selectedToppings}
             onToggleTopping={toggleTopping}
             quantity={quantity}
-            stock={product.stock}
+            stock={currentSizeAvailability}
             onDecreaseQuantity={decreaseQuantity}
             onIncreaseQuantity={increaseQuantity}
             formatMoney={formatMoney}
@@ -178,10 +222,10 @@ function ProductDetailDialog({
           <button
             type="button"
             onClick={confirm}
-            disabled={product.stock <= 0}
+            disabled={currentSizeAvailability <= 0}
             className="flex-1 py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-bold text-sm shadow-lg shadow-amber-500/25 transition-all text-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
-            {product.stock <= 0
+            {currentSizeAvailability <= 0
               ? 'Hết hàng'
               : `Thêm vào giỏ hàng • ${formatMoney(totalPrice)}`}
           </button>

@@ -52,8 +52,11 @@ export default function ProductCard({
         <p className="product-note">{product.note}</p>
         <p className="stock">
           <span />
-          {Math.max(0, product.stock - quantityInCart)}{' '}
-          {product.category === 'Pastries' ? 'pieces' : 'cups'} left
+          {(product.stock ?? 99) > 0
+            ? product.category === 'Pastries'
+              ? `Còn ${Math.max(0, (product.stock ?? 99) - quantityInCart)} cái`
+              : `Chỉ còn nguyên liệu làm ${Math.max(0, (product.stock ?? 99) - quantityInCart)} ly`
+            : 'Hết nguyên liệu'}
         </p>
 
         <div className="product-bottom">
@@ -65,8 +68,14 @@ export default function ProductCard({
               e.stopPropagation();
               onSelect(product);
             }}
-            disabled={quantityInCart >= product.stock}
-            title="Chọn size và topping"
+            disabled={quantityInCart >= (product.stock ?? 99) || (product.stock ?? 99) <= 0}
+            title={
+              (product.stock ?? 99) <= 0
+                ? 'Đã hết nguyên liệu pha chế'
+                : quantityInCart >= (product.stock ?? 99)
+                ? 'Đã chọn số lượng tối đa có thể pha chế'
+                : 'Chọn size và topping'
+            }
           >
             <Icon name="plus" size={19} />
           </button>
