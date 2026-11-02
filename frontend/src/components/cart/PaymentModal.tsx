@@ -391,6 +391,9 @@ export default function PaymentModal({
     setIsAwaitingPayment(false);
     setIsSimulatingBank(false);
     setPaymentError(null);
+    // Reset orderId de lan mo modal sau tao don moi, khong tai dung don cu (co the da CANCELLED)
+    setPendingOrderId(null);
+    setPendingOrderCode(null);
     onClose();
   };
 

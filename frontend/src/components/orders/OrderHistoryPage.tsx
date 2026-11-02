@@ -338,8 +338,8 @@ export default function OrderHistoryPage() {
 
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {inProgressSteps.map((step, idx) => {
-                          const isCurrent = stepIdx === idx;
-                          const isPassed = stepIdx > idx;
+                          const isCurrent = stepIdx === idx && !isCompleted;
+                          const isPassed = stepIdx > idx || isCompleted;
 
                           return (
                             <div
