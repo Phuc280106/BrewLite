@@ -51,7 +51,6 @@ export default function PaymentModal({
   const [pendingOrderCode, setPendingOrderCode] = useState<string | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
   const [isAwaitingPayment, setIsAwaitingPayment] = useState(false);
-  const [isSimulatingBank, setIsSimulatingBank] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Màn hình thành công (PAID)
@@ -321,55 +320,6 @@ export default function PaymentModal({
       setPaymentError(errorMsg);
     } finally {
       setIsInitiating(false);
-    }
-  };
-
-  // 2. Mô phỏng Ngân hàng gửi Webhook (Demo trên lớp)
-  const handleSimulateBankConfirm = async () => {
-    if (!pendingOrderId) return;
-    setIsSimulatingBank(true);
-    setPaymentError(null);
-
-    try {
-      const res = await api.post<{
-        success: boolean;
-        status: string;
-        loyaltyPointsEarned?: number;
-      }>('/payments/mock-bank/confirm', {
-        orderId: pendingOrderId,
-      });
-
-      if (res.data.status === 'PAID') {
-        if (pollingRef.current) {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-        }
-
-        setPaidResult({
-          orderCode:
-            pendingOrderCode ||
-            `BL-${String(pendingOrderId).padStart(6, '0')}`,
-          amount: paymentIntent?.amount || finalTotal,
-          methodTitle: getMethodTitle(selectedMethod),
-          loyaltyPointsEarned:
-            res.data.loyaltyPointsEarned ?? Math.floor(finalTotal / 10000),
-          discount: discountAmount,
-          couponCode: appliedPromotion?.code,
-        });
-
-        clearCart();
-        setIsAwaitingPayment(false);
-        setPendingOrderId(null);
-        setPendingOrderCode(null);
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
-        }
-      }
-    } catch (err) {
-      console.error('Simulate error:', err);
-      setPaymentError('Không thể gửi tín hiệu giả lập từ Ngân hàng.');
-    } finally {
-      setIsSimulatingBank(false);
     }
   };
 

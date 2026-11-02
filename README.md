@@ -66,8 +66,8 @@ Chạy các lệnh sau trong thư mục `backend/` để sinh Prisma Client, t�
 ```bash
 cd backend
 
-# 1. Tạo bảng vào cơ sở dữ liệu
-npx prisma db push
+# 1. Áp dụng migrations vào cơ sở dữ liệu
+npx prisma migrate dev
 
 # 2. Nạp dữ liệu mẫu (Menu món nước, Voucher, Tài khoản Barista/User)
 npx prisma db seed
