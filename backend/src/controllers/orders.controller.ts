@@ -31,6 +31,34 @@ export class OrdersController {
     return this.ordersService.getPromotions();
   }
 
+  @Get('availability/:productId')
+  @ApiOperation({
+    summary: 'Tính số ly tối đa dựa theo tồn kho nguyên liệu hiện tại',
+  })
+  @ApiQuery({ name: 'size', required: false, example: 'M' })
+  async getAvailability(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Query('size') size?: string
+  ) {
+    if (size) {
+      const maxCups = await this.ordersService.calculateProductAvailability(
+        productId,
+        size
+      );
+      return { productId, size, maxCups, availability: maxCups };
+    }
+
+    const details = await this.ordersService.calculateProductAvailabilityDetails(
+      productId
+    );
+    return {
+      productId,
+      maxCups: details.maxCups,
+      availability: details.maxCups,
+      bySize: details.bySize,
+    };
+  }
+
   @Get('promotions/validate')
   @ApiOperation({
     summary: 'Kiểm tra tính hợp lệ và số tiền giảm giá của mã khuyến mãi',

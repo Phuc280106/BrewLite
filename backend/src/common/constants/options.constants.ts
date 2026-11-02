@@ -31,6 +31,18 @@ export const TOPPING_PRICE: Record<string, number> = {
   peach_jelly: 8000,
 };
 
-export const ALLOWED_TOPPING_IDS = PRODUCT_TOPPINGS.map(
-  (topping) => topping.id
-) as [string, ...string[]];
+export const ALLOWED_TOPPING_IDS: [string, ...string[]] = [
+  'pearl',
+  'cheese',
+  'peach_jelly',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+];
