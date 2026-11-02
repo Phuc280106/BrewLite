@@ -120,7 +120,8 @@ export interface InitiatePaymentResponse {
   orderCode: string;
   total: number;
   method: string;
-  paymentIntent: PaymentIntent;
+  paymentIntent?: PaymentIntent;
+  paymentUrl?: string;
 }
 
 export interface OrderStatusResponse {
