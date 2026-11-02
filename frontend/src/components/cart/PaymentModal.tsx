@@ -34,7 +34,7 @@ export default function PaymentModal({
   const clearCart = useCartStore((state) => state.clearCart);
 
   // Phương thức thanh toán
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('VIETQR');
+  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('VNPAY');
 
   // Khuyến mãi
   const [couponInput, setCouponInput] = useState('');
@@ -51,8 +51,6 @@ export default function PaymentModal({
   const [pendingOrderCode, setPendingOrderCode] = useState<string | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
   const [isAwaitingPayment, setIsAwaitingPayment] = useState(false);
-
-  // Trạng thái mô phỏng ngân hàng
   const [isSimulatingBank, setIsSimulatingBank] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -274,7 +272,7 @@ export default function PaymentModal({
           items: cart.map(({ productId, size, toppings, quantity }) => ({
             productId,
             size,
-            toppings,
+            toppings: (toppings || []).filter((t) => ['pearl', 'cheese', 'peach_jelly'].includes(t)),
             quantity,
           })),
           couponCode: appliedPromotion ? appliedPromotion.code : undefined,
@@ -298,7 +296,13 @@ export default function PaymentModal({
         }
       );
 
-      setPaymentIntent(initRes.data.paymentIntent);
+      // Nếu chọn VNPay: Chuyển hướng trình duyệt trực tiếp sang Cổng thanh toán VNPay Sandbox
+      if (initRes.data.paymentUrl) {
+        window.location.href = initRes.data.paymentUrl;
+        return;
+      }
+
+      setPaymentIntent(initRes.data.paymentIntent || null);
       setIsAwaitingPayment(true);
     } catch (err) {
       console.error('Initiate payment error:', err);
@@ -383,7 +387,6 @@ export default function PaymentModal({
     setPaidResult(null);
     setPaymentIntent(null);
     setIsAwaitingPayment(false);
-    setIsSimulatingBank(false);
     setPendingOrderId(null);
     setPendingOrderCode(null);
     setAppliedPromotion(null);
@@ -398,7 +401,6 @@ export default function PaymentModal({
       pollingRef.current = null;
     }
     setIsAwaitingPayment(false);
-    setIsSimulatingBank(false);
     setPaymentError(null);
     // Reset orderId de lan mo modal sau tao don moi, khong tai dung don cu (co the da CANCELLED)
     setPendingOrderId(null);
@@ -600,39 +602,6 @@ export default function PaymentModal({
               </div>
             </div>
 
-            {/* BẢNG ĐIỀU KHIỂN GIẢ LẬP NGÂN HÀNG (DÀNH CHO DEMO ĐỒ ÁN) */}
-            <div className="bg-amber-50/70 border-2 border-dashed border-amber-300 rounded-2xl p-3.5 space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🛠️</span>
-                <div>
-                  <h4 className="text-xs font-bold text-amber-900">
-                    Bảng điều khiển Giả lập Ngân hàng (Mock Sandbox)
-                  </h4>
-                  <p className="text-[11px] text-amber-700">
-                    Bấm nút bên dưới để mô phỏng Ngân hàng gửi Webhook có chữ ký HMAC vào Backend:
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSimulateBankConfirm}
-                disabled={isSimulatingBank}
-                className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white font-bold rounded-xl shadow text-xs flex items-center justify-center gap-2 transition-colors"
-              >
-                {isSimulatingBank ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                    <span>Đang bắn Webhook HMAC-SHA256...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>🟢 [DEMO] Giả lập Khách chuyển khoản thành công</span>
-                  </>
-                )}
-              </button>
-            </div>
-
             {paymentError && (
               <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
                 {paymentError}
@@ -666,7 +635,34 @@ export default function PaymentModal({
               </label>
 
               <div className="grid grid-cols-2 gap-2.5">
-                {/* 1. VietQR Napas 24/7 (Khuyến nghị hàng đầu) */}
+                {/* 1. VNPay Sandbox (Cổng Sandbox Chính thức) */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedMethod('VNPAY')}
+                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
+                    selectedMethod === 'VNPAY'
+                      ? 'border-blue-600 bg-blue-50/60 shadow-sm'
+                      : 'border-stone-200 hover:border-stone-300 bg-white'
+                  }`}
+                >
+                  <span className="text-xl">🏦</span>
+                  <div>
+                    <div className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                      <span>Cổng VNPay</span>
+                      <span className="text-[9px] bg-blue-600 text-white font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                        Sandbox
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-blue-700 font-semibold block mt-0.5">
+                      Khuyên dùng · Đã kết nối Sandbox
+                    </span>
+                  </div>
+                  {selectedMethod === 'VNPAY' && (
+                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-600"></span>
+                  )}
+                </button>
+
+                {/* 2. VietQR Napas 24/7 */}
                 <button
                   type="button"
                   onClick={() => setSelectedMethod('VIETQR')}
@@ -682,7 +678,7 @@ export default function PaymentModal({
                       <span>VietQR Napas 24/7</span>
                     </div>
                     <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
-                      Khuyên dùng · Miễn phí
+                      Quét mã chuyển khoản
                     </span>
                   </div>
                   {selectedMethod === 'VIETQR' && (
@@ -690,7 +686,7 @@ export default function PaymentModal({
                   )}
                 </button>
 
-                {/* 2. MoMo */}
+                {/* 3. MoMo */}
                 <button
                   type="button"
                   onClick={() => setSelectedMethod('MOMO')}
@@ -709,28 +705,6 @@ export default function PaymentModal({
                   </div>
                   {selectedMethod === 'MOMO' && (
                     <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-pink-600"></span>
-                  )}
-                </button>
-
-                {/* 3. VNPay */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedMethod('VNPAY')}
-                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                    selectedMethod === 'VNPAY'
-                      ? 'border-blue-600 bg-blue-50/50 shadow-sm'
-                      : 'border-stone-200 hover:border-stone-300 bg-white'
-                  }`}
-                >
-                  <span className="text-xl">🏦</span>
-                  <div>
-                    <div className="text-xs font-bold text-stone-900">VNPay QR</div>
-                    <span className="text-[10px] text-stone-400 block mt-0.5">
-                      Ứng dụng ngân hàng
-                    </span>
-                  </div>
-                  {selectedMethod === 'VNPAY' && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-600"></span>
                   )}
                 </button>
 
@@ -881,11 +855,19 @@ export default function PaymentModal({
               {isInitiating ? (
                 <>
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  <span>Đang khởi tạo mã VietQR...</span>
+                  <span>
+                    {selectedMethod === 'VNPAY'
+                      ? 'Đang chuyển hướng sang VNPay...'
+                      : 'Đang khởi tạo mã VietQR...'}
+                  </span>
                 </>
               ) : (
                 <>
-                  <span>Lấy mã VietQR & Thanh toán ({formatMoney(finalTotal)})</span>
+                  <span>
+                    {selectedMethod === 'VNPAY'
+                      ? `Chuyển sang Cổng VNPay Sandbox (${formatMoney(finalTotal)})`
+                      : `Lấy mã VietQR & Thanh toán (${formatMoney(finalTotal)})`}
+                  </span>
                   <span>→</span>
                 </>
               )}

@@ -3,8 +3,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../database/prisma.service.js';
 import { OrderStatus } from '../common/state-machine/order-state-machine.js';
 
-/** Thời gian tối đa (phút) kể từ khi tạo đơn mà chưa được thanh toán. */
-export const PAYMENT_TTL_MINUTES = 1;
+/** Thời gian tối đa (phút) kể từ khi tạo đơn mà chưa được thanh toán (10 phút). */
+export const PAYMENT_TTL_MINUTES = 10;
+export const PAYMENT_TTL_SECONDS = PAYMENT_TTL_MINUTES * 60;
 
 /**
  * Chạy mỗi phút, tìm các đơn hàng PENDING / PAYMENT_FAILED quá TTL và:
@@ -64,12 +65,42 @@ export class OrderExpiryService {
             return;
           }
 
-          // Hoàn trả tồn kho cho từng sản phẩm
-          for (const item of order.items) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { stock: { increment: item.qty } },
-            });
+          // Hoàn trả tồn kho nguyên liệu (nếu có công thức)
+          const recipeItems = (tx as any).recipeItem?.findMany
+            ? await (tx as any).recipeItem.findMany({
+                where: { productId: { in: order.items.map((it: any) => it.productId) } },
+              })
+            : [];
+
+          if (recipeItems.length > 0 && (tx as any).ingredient?.update) {
+            for (const item of order.items as any[]) {
+              const matched = recipeItems.filter(
+                (r: any) => r.productId === item.productId && (!item.size || r.size === item.size)
+              );
+              for (const r of matched) {
+                await (tx as any).ingredient.update({
+                  where: { id: r.ingredientId },
+                  data: {
+                    stock: { increment: Math.round(r.amount * item.qty) },
+                    version: { increment: 1 },
+                  },
+                });
+              }
+            }
+          }
+
+          // Hoàn trả tồn kho cho từng sản phẩm (nếu Product model còn trường stock)
+          if ((tx as any).product?.update) {
+            for (const item of order.items) {
+              try {
+                await (tx as any).product.update({
+                  where: { id: item.productId },
+                  data: { stock: { increment: item.qty } },
+                });
+              } catch {
+                // Product không có trường stock thì an toàn bỏ qua
+              }
+            }
           }
 
           // Chuyển đơn sang CANCELLED

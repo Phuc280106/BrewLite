@@ -16,7 +16,7 @@ export enum OrderStatus {
  * PENDING        -> PAID | PAYMENT_FAILED | CANCELLED
  * PAYMENT_FAILED -> PAID (thử lại) | CANCELLED
  * PAID           -> PREPARING | CANCELLED (hủy/hoàn tiền)
- * PREPARING      -> READY | CANCELLED
+ * PREPARING      -> READY
  * READY          -> COMPLETED
  * COMPLETED      -> (Terminal State - không thể chuyển tiếp)
  * CANCELLED      -> (Terminal State - không thể chuyển tiếp)
@@ -37,7 +37,6 @@ export const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   ],
   [OrderStatus.PREPARING]: [
     OrderStatus.READY,
-    OrderStatus.CANCELLED,
   ],
   [OrderStatus.READY]: [
     OrderStatus.COMPLETED,

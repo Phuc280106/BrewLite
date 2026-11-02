@@ -7,10 +7,11 @@ import { PaymentsController } from '../controllers/payments.controller.js';
 import { OrdersService } from '../services/orders.service.js';
 import { MockGatewayService } from '../services/mock-gateway.service.js';
 import { OrderExpiryService } from '../services/order-expiry.service.js';
+import { VnpayService } from '../services/vnpay.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot(), DatabaseModule, AuthModule],
   controllers: [OrdersController, PaymentsController],
-  providers: [OrdersService, MockGatewayService, OrderExpiryService],
+  providers: [OrdersService, MockGatewayService, VnpayService, OrderExpiryService],
 })
 export class OrdersModule {}
