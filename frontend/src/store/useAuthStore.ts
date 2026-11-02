@@ -41,6 +41,8 @@ export const useAuthStore = create<AuthState>()(
       logout: () => {
         if (typeof window !== 'undefined') {
           localStorage.removeItem('brewlite_token');
+          localStorage.removeItem('brewlite-cart');
+          localStorage.removeItem('brewlite-cart-guest');
         }
         set({
           user: null,

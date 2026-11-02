@@ -62,14 +62,16 @@ function ProductDetailDialog({
 
         if (prodRes.status === 'fulfilled' && prodRes.value.data && isMounted) {
           const data = prodRes.value.data;
+          const freshStock = data.stock ?? prevStock(data.stock, initialProduct.stock);
           setProduct((prev) => ({
             ...prev,
             name: data.name || prev.name,
             price: data.price ?? prev.price,
-            stock: data.stock ?? prev.stock,
+            stock: freshStock,
             note: data.description || prev.note,
             image: data.imageUrl || prev.image,
             category: data.category || prev.category,
+            tag: freshStock <= 0 ? 'Out of Stock' : prev.tag,
           }));
         }
 
@@ -91,13 +93,17 @@ function ProductDetailDialog({
     return () => {
       isMounted = false;
     };
-  }, [initialProduct.id]);
+  }, [initialProduct.id, initialProduct.stock]);
+
+  function prevStock(val?: number, fallback?: number) {
+    return val !== undefined ? val : (fallback ?? 0);
+  }
 
   const [provisionalSize, setProvisionalSize] = useState<string>('M');
   const currentSizeAvailability =
     availabilityBySize && provisionalSize in availabilityBySize
       ? availabilityBySize[provisionalSize]
-      : (maxAvailability ?? product.stock ?? 99);
+      : (maxAvailability ?? product.stock ?? 0);
 
   const {
     sizes,
@@ -120,6 +126,8 @@ function ProductDetailDialog({
 
   const formatMoney = (value: number) => `${value.toLocaleString('vi-VN')} ₫`;
 
+  const isOutOfStock = currentSizeAvailability <= 0 || (product.stock ?? 0) <= 0;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 animate-fadeIn"
@@ -133,7 +141,7 @@ function ProductDetailDialog({
           <img
             src={product.image}
             alt={product.name}
-            className="w-full h-full object-cover"
+            className={`w-full h-full object-cover ${isOutOfStock ? 'opacity-80 grayscale-[20%]' : ''}`}
           />
           <button
             onClick={onClose}
@@ -143,8 +151,14 @@ function ProductDetailDialog({
             ✕
           </button>
           {product.tag && (
-            <span className="absolute bottom-4 left-4 bg-amber-500 text-white text-xs font-semibold px-3 py-1 rounded-full shadow-sm">
-              {product.tag}
+            <span
+              className={`absolute bottom-4 left-4 text-xs font-semibold px-3 py-1 rounded-full shadow-sm ${
+                isOutOfStock
+                  ? 'bg-stone-200 text-stone-600'
+                  : 'bg-amber-500 text-white'
+              }`}
+            >
+              {isOutOfStock ? 'Out of Stock' : product.tag}
             </span>
           )}
         </div>

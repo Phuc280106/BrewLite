@@ -22,16 +22,24 @@ const FALLBACK_IMAGE =
 type MenuState = 'Loading' | 'Menu' | 'Empty';
 
 function toProductItem(product: ProductResponse): ProductItem {
+  const stock = product.stock ?? 0;
+  const isOutOfStock = stock <= 0;
+  const tag = isOutOfStock
+    ? 'Out of Stock'
+    : product.id === 13 || product.id === 1
+    ? 'Best Seller'
+    : 'In Stock';
+
   return {
     id: product.id,
     name: product.name,
     note: product.description || 'Hương vị đồ uống tươi mới mỗi ngày',
     price: product.price,
-    stock: product.stock ?? 99,
+    stock,
     category:
       product.category ||
       (product.name.toLowerCase().includes('trà') ? 'Tea & Fruit' : 'Coffee'),
-    tag: product.id === 13 || product.id === 1 ? 'Best Seller' : 'In Stock',
+    tag,
     image: product.imageUrl || FALLBACK_IMAGE,
   };
 }
@@ -48,9 +56,9 @@ export default function MenuSection() {
   const addToCart = useCartStore((state) => state.addToCart);
 
   useEffect(() => {
-    async function fetchProducts() {
+    async function fetchProducts(showLoading = false) {
       try {
-        setMenuState('Loading');
+        if (showLoading) setMenuState('Loading');
         const response = await api.get<ProductResponse[]>('/products');
 
         if (response.data.length > 0) {
@@ -65,7 +73,21 @@ export default function MenuSection() {
       }
     }
 
-    void fetchProducts();
+    void fetchProducts(true);
+
+    const handleRefresh = () => {
+      void fetchProducts(false);
+    };
+
+    window.addEventListener('brewlite:refresh-products', handleRefresh);
+    window.addEventListener('focus', handleRefresh);
+    const interval = setInterval(handleRefresh, 15000);
+
+    return () => {
+      window.removeEventListener('brewlite:refresh-products', handleRefresh);
+      window.removeEventListener('focus', handleRefresh);
+      clearInterval(interval);
+    };
   }, []);
 
   const filteredProducts = products.filter((product) => {

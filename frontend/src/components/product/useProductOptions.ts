@@ -82,8 +82,8 @@ export default function useProductOptions(
     quantity,
     decreaseQuantity: () => setQuantity((current) => Math.max(1, current - 1)),
     increaseQuantity: (stockLimit?: number) => {
-      const baseLimit = stockLimit ?? currentStock ?? product?.stock ?? 99;
-      const effectiveLimit = Math.min(baseLimit, maxToppingStock === Infinity ? 99 : maxToppingStock);
+      const baseLimit = stockLimit ?? currentStock ?? product?.stock ?? 0;
+      const effectiveLimit = Math.min(baseLimit, maxToppingStock === Infinity ? baseLimit : maxToppingStock);
       setQuantity((current) => {
         if (current >= effectiveLimit) return current;
         return current + 1;
