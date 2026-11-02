@@ -5,10 +5,11 @@ import { OrdersController } from '../controllers/orders.controller.js';
 import { PaymentsController } from '../controllers/payments.controller.js';
 import { OrdersService } from '../services/orders.service.js';
 import { MockGatewayService } from '../services/mock-gateway.service.js';
+import { VnpayService } from '../services/vnpay.service.js';
 
 @Module({
   imports: [DatabaseModule, AuthModule],
   controllers: [OrdersController, PaymentsController],
-  providers: [OrdersService, MockGatewayService],
+  providers: [OrdersService, MockGatewayService, VnpayService],
 })
 export class OrdersModule {}
