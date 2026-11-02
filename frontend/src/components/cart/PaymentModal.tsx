@@ -236,7 +236,7 @@ export default function PaymentModal({
   };
 
   // Tên hiển thị của phương thức
-  const getMethodTitle = (method: PaymentMethod) => {
+  function getMethodTitle(method: PaymentMethod) {
     switch (method) {
       case 'VIETQR':
         return 'Chuyển khoản VietQR Napas 24/7';

@@ -34,9 +34,9 @@ export default function CartDrawer({
   onCheckout,
   formatPrice = (val: number) => `${val.toLocaleString('vi-VN')} ₫`,
 }: CartDrawerProps) {
-  if (!isOpen) return null;
-
   const setCurrentView = useViewStore((state) => state.setCurrentView);
+
+  if (!isOpen) return null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
