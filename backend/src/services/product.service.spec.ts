@@ -41,6 +41,32 @@ describe('ProductService', () => {
       const result = await service.findAll();
       expect(result).toEqual(mockProducts);
     });
+
+    it('calculates stock from recipeItems for each product', async () => {
+      const mockProductsWithRecipe = [
+        {
+          id: 1,
+          name: 'Cà phê sữa đá',
+          recipeItems: [
+            {
+              size: 'M',
+              amount: 20,
+              ingredient: { id: 1, name: 'Hạt cà phê', stock: 100 },
+            },
+          ],
+        },
+      ];
+      vi.mocked(prisma.product.findMany).mockResolvedValue(mockProductsWithRecipe as any);
+
+      const result = await service.findAll();
+      expect(result).toEqual([
+        {
+          id: 1,
+          name: 'Cà phê sữa đá',
+          stock: 5,
+        },
+      ]);
+    });
   });
 
   describe('findOne', () => {
@@ -50,7 +76,33 @@ describe('ProductService', () => {
 
       const result = await service.findOne(1);
       expect(result).toEqual(mockProduct);
-      expect(prisma.product.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(prisma.product.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 1 } })
+      );
+    });
+
+    it('calculates stock from recipeItems when available', async () => {
+      const mockProductWithRecipe = {
+        id: 1,
+        name: 'Cà phê sữa đá',
+        price: 25000,
+        recipeItems: [
+          {
+            size: 'M',
+            amount: 20,
+            ingredient: { id: 1, name: 'Hạt cà phê', stock: 100 },
+          },
+        ],
+      };
+      vi.mocked(prisma.product.findUnique).mockResolvedValue(mockProductWithRecipe as any);
+
+      const result = await service.findOne(1);
+      expect(result).toEqual({
+        id: 1,
+        name: 'Cà phê sữa đá',
+        price: 25000,
+        stock: 5,
+      });
     });
 
     it('throws NotFoundException if product is not found', async () => {

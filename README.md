@@ -9,6 +9,8 @@ Mở một terminal mới và chạy các lệnh sau:
 ```bash
 cd backend
 npm install
+npx prisma migrate dev
+npx prisma db seed 
 npm run start:dev
 ```
 *Backend sẽ chạy ở cổng `http://localhost:3001`*

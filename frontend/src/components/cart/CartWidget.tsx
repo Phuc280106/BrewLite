@@ -30,8 +30,8 @@ export default function CartWidget() {
   );
 
   useEffect(() => {
-    void useCartStore.persist.rehydrate();
-  }, []);
+    useCartStore.getState().loadCartForUser(user?.id);
+  }, [user?.id]);
 
   const handleCheckoutClick = () => {
     if (cart.length === 0) return;

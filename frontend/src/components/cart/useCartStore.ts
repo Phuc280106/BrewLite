@@ -1,8 +1,8 @@
 'use client';
 
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
 import { CartItem, CartItemOptions } from '../../types';
+import { useAuthStore } from '../../store/useAuthStore';
 
 interface CartStore {
   cart: CartItem[];
@@ -12,84 +12,175 @@ interface CartStore {
   updateQuantity: (cartItemId: string, change: number) => void;
   completeCheckout: () => void;
   clearCart: () => void;
-}
-
-interface PersistedCartState {
-  cart: CartItem[];
+  loadCartForUser: (userId?: number | null) => void;
 }
 
 let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
-export const useCartStore = create<CartStore>()(
-  persist<CartStore, [], [], PersistedCartState>(
-    (set) => ({
-      cart: [],
-      ordered: false,
-      toastMessage: null,
-      addToCart: (options) => {
-        const toppings = [...options.toppings];
-        const cartItemId = `${options.product.id}-${options.size}-${[...toppings]
-          .sort()
-          .join('-')}`;
+function getCartStorageKey(userId?: number | null): string {
+  return userId ? `brewlite-cart-user-${userId}` : 'brewlite-cart-guest';
+}
 
-        set((state) => {
-          const existingIndex = state.cart.findIndex(
-            (item) => item.cartItemId === cartItemId
-          );
+function loadCartFromStorage(userId?: number | null): CartItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = getCartStorageKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : parsed?.cart || [];
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
 
-          if (existingIndex > -1) {
-            const cart = [...state.cart];
-            cart[existingIndex] = {
-              ...cart[existingIndex],
-              quantity: cart[existingIndex].quantity + options.quantity,
-            };
-            return { cart, ordered: false };
+function saveCartToStorage(cart: CartItem[], userId?: number | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getCartStorageKey(userId);
+    localStorage.setItem(key, JSON.stringify({ cart }));
+  } catch (err) {
+    console.warn('Failed to save cart to localStorage', err);
+  }
+}
+
+export const useCartStore = create<CartStore>()((set) => ({
+  cart: [],
+  ordered: false,
+  toastMessage: null,
+
+  addToCart: (options) => {
+    const toppings = [...options.toppings];
+    const cartItemId = `${options.product.id}-${options.size}-${[...toppings]
+      .sort()
+      .join('-')}`;
+    const currentUserId = useAuthStore.getState().user?.id ?? null;
+
+    set((state) => {
+      const existingIndex = state.cart.findIndex(
+        (item) => item.cartItemId === cartItemId
+      );
+
+      let nextCart: CartItem[];
+      if (existingIndex > -1) {
+        nextCart = [...state.cart];
+        const maxStock =
+          nextCart[existingIndex].maxStock ?? options.product.stock ?? 0;
+        const newQty = Math.min(
+          maxStock > 0 ? maxStock : 99,
+          nextCart[existingIndex].quantity + options.quantity
+        );
+        nextCart[existingIndex] = {
+          ...nextCart[existingIndex],
+          quantity: newQty,
+          maxStock:
+            maxStock > 0 ? maxStock : nextCart[existingIndex].maxStock ?? 99,
+        };
+      } else {
+        const maxStock = options.product.stock ?? 0;
+        nextCart = [
+          ...state.cart,
+          {
+            cartItemId,
+            productId: options.product.id,
+            name: options.product.name,
+            image: options.product.image,
+            size: options.size,
+            toppings,
+            unitPrice: options.unitPrice,
+            quantity: options.quantity,
+            maxStock: maxStock > 0 ? maxStock : 99,
+          },
+        ];
+      }
+
+      saveCartToStorage(nextCart, currentUserId);
+      return { cart: nextCart, ordered: false };
+    });
+
+    set({
+      toastMessage: `Đã thêm ${options.quantity}x ${options.product.name} (Size ${options.size}) vào giỏ!`,
+    });
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);
+  },
+
+  updateQuantity: (cartItemId, change) => {
+    let reachedLimit = false;
+    let limitVal = 0;
+    const currentUserId = useAuthStore.getState().user?.id ?? null;
+
+    set((state) => {
+      const nextCart = state.cart
+        .map((item) => {
+          if (item.cartItemId !== cartItemId) return item;
+          const maxStock = item.maxStock ?? 99;
+          if (change > 0 && item.quantity >= maxStock) {
+            reachedLimit = true;
+            limitVal = maxStock;
+            return item;
           }
+          const nextQuantity = item.quantity + change;
+          return nextQuantity > 0
+            ? { ...item, quantity: nextQuantity }
+            : null;
+        })
+        .filter((item): item is CartItem => item !== null);
 
-          return {
-            cart: [
-              ...state.cart,
-              {
-                cartItemId,
-                productId: options.product.id,
-                name: options.product.name,
-                image: options.product.image,
-                size: options.size,
-                toppings,
-                unitPrice: options.unitPrice,
-                quantity: options.quantity,
-              },
-            ],
-            ordered: false,
-          };
-        });
+      saveCartToStorage(nextCart, currentUserId);
+      return { cart: nextCart };
+    });
 
-        set({
-          toastMessage: `Đã thêm ${options.quantity}x ${options.product.name} (Size ${options.size}) vào giỏ!`,
-        });
-        if (toastTimeout) clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);
-      },
-      updateQuantity: (cartItemId, change) =>
-        set((state) => ({
-          cart: state.cart
-            .map((item) => {
-              if (item.cartItemId !== cartItemId) return item;
-              const nextQuantity = item.quantity + change;
-              return nextQuantity > 0
-                ? { ...item, quantity: nextQuantity }
-                : null;
-            })
-            .filter((item): item is CartItem => item !== null),
-        })),
-      completeCheckout: () => set({ ordered: true, cart: [] }),
-      clearCart: () => set({ cart: [] }),
-    }),
-    {
-      name: 'brewlite-cart',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ cart: state.cart }),
-      skipHydration: true,
+    if (reachedLimit) {
+      set({
+        toastMessage: `Đã đạt số ly tối đa có thể pha chế (${limitVal} ly)!`,
+      });
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);
     }
-  )
-);
+  },
+
+  completeCheckout: () => {
+    const currentUserId = useAuthStore.getState().user?.id ?? null;
+    saveCartToStorage([], currentUserId);
+    set({ ordered: true, cart: [] });
+  },
+
+  clearCart: () => {
+    const currentUserId = useAuthStore.getState().user?.id ?? null;
+    saveCartToStorage([], currentUserId);
+    set({ cart: [] });
+  },
+
+  loadCartForUser: (userId?: number | null) => {
+    const loadedCart = loadCartFromStorage(userId);
+    set({ cart: loadedCart, ordered: false });
+  },
+}));
+
+// Tương thích ngược với lời gọi `useCartStore.persist.rehydrate()`
+(useCartStore as any).persist = {
+  rehydrate: () => {
+    const currentUserId = useAuthStore.getState().user?.id ?? null;
+    useCartStore.getState().loadCartForUser(currentUserId);
+  },
+};
+
+// Tự động đồng bộ giỏ hàng riêng biệt theo từng tài khoản khi đăng nhập / đăng xuất
+if (typeof window !== 'undefined') {
+  try {
+    // Dọn dẹp key cũ không phân biệt tài khoản để tránh rò rỉ dữ liệu
+    localStorage.removeItem('brewlite-cart');
+  } catch {}
+
+  let previousUserId = useAuthStore.getState().user?.id ?? null;
+
+  useAuthStore.subscribe((state) => {
+    const newUserId = state.user?.id ?? null;
+    if (newUserId !== previousUserId) {
+      previousUserId = newUserId;
+      useCartStore.getState().loadCartForUser(newUserId);
+    }
+  });
+}
