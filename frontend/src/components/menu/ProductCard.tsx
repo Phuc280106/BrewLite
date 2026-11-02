@@ -16,6 +16,10 @@ export default function ProductCard({
   onSelect,
 }: ProductCardProps) {
   const formatMoney = (val: number) => `${val.toLocaleString('vi-VN')} ₫`;
+  const availableStock = product.stock ?? 0;
+  const isOutOfStock = availableStock <= 0;
+  const remainingStock = Math.max(0, availableStock - quantityInCart);
+  const displayTag = isOutOfStock ? 'Out of Stock' : (product.tag || 'In Stock');
 
   return (
     <article
@@ -27,6 +31,7 @@ export default function ProductCard({
           src={product.image}
           alt={product.name}
           loading="lazy"
+          className={isOutOfStock ? 'opacity-75 grayscale-[25%]' : ''}
           onError={(e) => {
             (e.target as HTMLImageElement).src =
               'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?auto=format&fit=crop&w=650&q=85';
@@ -34,13 +39,16 @@ export default function ProductCard({
         />
         <span
           className={`product-tag ${
-            product.tag === 'Best Seller' || product.tag === 'Popular'
+            isOutOfStock
+              ? 'out-of-stock !bg-stone-100 !text-stone-500 border border-stone-200'
+              : displayTag === 'Best Seller' || displayTag === 'Popular'
               ? 'bestseller'
               : ''
           }`}
         >
-          {product.tag === 'In Stock' && <i />}
-          {product.tag}
+          {displayTag === 'In Stock' && <i />}
+          {isOutOfStock && <i className="!bg-rose-500" />}
+          {displayTag}
         </span>
         {quantityInCart > 0 && (
           <span className="quantity-badge">{quantityInCart} in bag</span>
@@ -50,23 +58,30 @@ export default function ProductCard({
       <div className="product-details">
         <h4>{product.name}</h4>
         <p className="product-note">{product.note}</p>
-        <p className="stock">
-          <span />
-          {Math.max(0, product.stock - quantityInCart)}{' '}
-          {product.category === 'Pastries' ? 'pieces' : 'cups'} left
-        </p>
+        {isOutOfStock && (
+          <p className="stock text-rose-500 font-medium">
+            <span className="!bg-rose-500" />
+            Hết nguyên liệu pha chế
+          </p>
+        )}
 
         <div className="product-bottom">
           <strong>{formatMoney(product.price)}</strong>
           <button
             type="button"
-            className="add-button"
+            className="add-button disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={(e) => {
               e.stopPropagation();
               onSelect(product);
             }}
-            disabled={quantityInCart >= product.stock}
-            title="Chọn size và topping"
+            disabled={remainingStock <= 0 || isOutOfStock}
+            title={
+              isOutOfStock
+                ? 'Đã hết nguyên liệu pha chế'
+                : remainingStock <= 0
+                ? 'Đã chọn số lượng tối đa có thể pha chế'
+                : 'Chọn size và topping'
+            }
           >
             <Icon name="plus" size={19} />
           </button>

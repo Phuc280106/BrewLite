@@ -160,6 +160,9 @@ export default function PaymentModal({
           setIsAwaitingPayment(false);
           setPendingOrderId(null);
           setPendingOrderCode(null);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
+          }
         } else if (res.data.status === 'PAYMENT_FAILED') {
           setPaymentError('Ngân hàng từ chối thanh toán. Vui lòng thử lại.');
           setIsAwaitingPayment(false);
@@ -278,6 +281,9 @@ export default function PaymentModal({
         activeOrderCode = orderRes.data.orderCode;
         setPendingOrderId(activeOrderId);
         setPendingOrderCode(activeOrderCode);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
+        }
       }
 
       // 2. Gọi Cổng thanh toán để tạo phiên thanh toán & sinh VietQR

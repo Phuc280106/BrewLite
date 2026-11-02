@@ -38,50 +38,8 @@ Mở terminal tại thư mục gốc của dự án (`BrewLite/`):
 # 1. Cài đặt thư viện cho Backend
 cd backend
 npm install
-
-# 2. Cài đặt thư viện cho Frontend
-cd ../frontend
-npm install
-```
-
----
-
-### Bước 2: Cấu hình biến môi trường (.env)
-
-Vào thư mục `backend/`, tạo một file mới đặt tên là **`.env`** (nằm cùng cấp với `package.json` của backend):
-
-```env
-PORT=3001
-DATABASE_URL="postgresql://postgres:123456@localhost:5432/brewlite"
-```
-
-> 💡 **Lưu ý:** Thay `postgres:123456` bằng tài khoản và mật khẩu PostgreSQL của bạn nếu có thiết lập khác. Đảm bảo bạn đã tạo một database tên là `brewlite` trên PostgreSQL.
-
----
-
-### Bước 3: Khởi tạo CSDL & Nạp dữ liệu mẫu
-
-Chạy các lệnh sau trong thư mục `backend/` để sinh Prisma Client, tạo cấu trúc bảng và nạp sẵn 6 món nước, mã voucher và 3 tài khoản demo:
-
-```bash
-cd backend
-
-# 1. Tạo bảng vào cơ sở dữ liệu
-npx prisma db push
-
-# 2. Nạp dữ liệu mẫu (Menu món nước, Voucher, Tài khoản Barista/User)
-npx prisma db seed
-```
-
----
-
-### Bước 4: Khởi động hệ thống
-
-Bạn mở **2 cửa sổ Terminal** riêng biệt:
-
-#### Terminal 1: Chạy Backend (NestJS)
-```bash
-cd backend
+npx prisma migrate dev
+npx prisma db seed 
 npm run start:dev
 ```
 * Backend khởi động tại: **`http://localhost:3001`**

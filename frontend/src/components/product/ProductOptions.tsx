@@ -82,25 +82,38 @@ export default function ProductOptions({
         <div className="space-y-2">
           {activeToppings.map((topping) => {
             const isChecked = selectedToppings.includes(topping.id);
+            const isOutOfStock = topping.stock !== undefined && topping.stock <= 0;
             return (
               <label
                 key={topping.id}
-                className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                  isChecked
-                    ? 'border-amber-500 bg-amber-50/60 text-stone-900 shadow-sm'
-                    : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
+                  isOutOfStock
+                    ? 'border-stone-200 bg-stone-50/70 text-stone-400 cursor-not-allowed opacity-60'
+                    : isChecked
+                    ? 'border-amber-500 bg-amber-50/60 text-stone-900 shadow-sm cursor-pointer'
+                    : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300 cursor-pointer'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <input
                     type="checkbox"
                     checked={isChecked}
-                    onChange={() => onToggleTopping(topping.id)}
-                    className="w-4 h-4 text-amber-600 rounded border-stone-300 focus:ring-amber-500 cursor-pointer"
+                    disabled={isOutOfStock}
+                    onChange={() => !isOutOfStock && onToggleTopping(topping.id)}
+                    className="w-4 h-4 text-amber-600 rounded border-stone-300 focus:ring-amber-500 cursor-pointer disabled:cursor-not-allowed"
                   />
-                  <span className="text-sm font-medium">{topping.name}</span>
+                  <div className="flex flex-col">
+                    <span className={`text-sm font-medium ${isOutOfStock ? 'text-stone-400' : ''}`}>
+                      {topping.name}
+                    </span>
+                    {topping.stock !== undefined && (
+                      <span className={`text-[11px] ${isOutOfStock ? 'text-red-500 font-semibold' : 'text-stone-400'}`}>
+                        {isOutOfStock ? 'Hết hàng' : `Còn ${topping.stock} phần`}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="text-xs font-semibold text-amber-700">
+                <span className={`text-xs font-semibold ${isOutOfStock ? 'text-stone-400 line-through' : 'text-amber-700'}`}>
                   +{formatMoney(topping.price)}
                 </span>
               </label>
@@ -117,8 +130,9 @@ export default function ProductOptions({
           <button
             type="button"
             onClick={onDecreaseQuantity}
-            className="w-8 h-8 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-lg disabled:opacity-40"
+            className="w-8 h-8 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-lg disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
             disabled={quantity <= 1}
+            title="Giảm số lượng"
           >
             −
           </button>
@@ -128,13 +142,36 @@ export default function ProductOptions({
           <button
             type="button"
             onClick={() => onIncreaseQuantity(stock)}
-            className="w-8 h-8 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-lg disabled:opacity-40"
+            className="w-8 h-8 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-lg disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
             disabled={quantity >= stock}
+            title={
+              quantity >= stock
+                ? `Đã đạt giới hạn tối đa ${stock} ly từ kho nguyên liệu`
+                : 'Tăng số lượng'
+            }
           >
             +
           </button>
         </div>
       </div>
+
+      {quantity >= stock && stock > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-800 flex items-center gap-2 animate-fadeIn">
+          <span className="text-sm">⚠️</span>
+          <span>
+            Đã đạt số lượng tối đa có thể pha chế dựa theo tồn kho nguyên liệu hiện tại (tối đa {stock} ly). Nút tăng đã được vô hiệu hóa.
+          </span>
+        </div>
+      )}
+
+      {stock <= 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5 text-xs text-rose-700 flex items-center gap-2 animate-fadeIn">
+          <span className="text-sm">⚠️</span>
+          <span>
+            Kho hiện không còn đủ nguyên liệu để pha chế size này. Vui lòng chọn size khác hoặc đồ uống khác.
+          </span>
+        </div>
+      )}
     </>
   );
 }

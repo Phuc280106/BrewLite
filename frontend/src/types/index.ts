@@ -5,7 +5,7 @@ export interface ProductItem {
   name: string;
   note: string;
   price: number;
-  stock: number;
+  stock?: number;
   category: string;
   tag?: string;
   image: string;
@@ -21,6 +21,7 @@ export interface ProductToppingOption {
   id: string;
   name: string;
   price: number;
+  stock?: number;
 }
 
 export interface ProductOptionsResponse {
@@ -64,6 +65,7 @@ export interface CartItem {
   toppings: string[];
   unitPrice: number;
   quantity: number;
+  maxStock?: number;
 }
 
 export interface CheckoutError {

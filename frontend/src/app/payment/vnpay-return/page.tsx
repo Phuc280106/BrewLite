@@ -46,6 +46,9 @@ function VnpayReturnContent() {
         // Nếu thanh toán thành công -> Xóa giỏ hàng
         if (res.data.success) {
           clearCart();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
+          }
         }
       } catch (err: unknown) {
         console.error('VNPay return verification error:', err);

@@ -11,7 +11,15 @@ export class OptionsController {
   @ApiOperation({
     summary: 'Lấy danh sách kích cỡ (sizes) và toppings cùng bảng giá',
   })
-  getOptions() {
+  async getOptions() {
     return this.optionsService.getOptions();
+  }
+
+  @Get('toppings')
+  @ApiOperation({
+    summary: 'Lấy danh sách toppings từ cơ sở dữ liệu',
+  })
+  async getToppings() {
+    return this.optionsService.getToppings();
   }
 }
