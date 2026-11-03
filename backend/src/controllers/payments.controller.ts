@@ -2,9 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Get,
-  Headers,
   Logger,
   Param,
   ParseIntPipe,
@@ -18,10 +16,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
-import { InitiatePaymentDto, PaymentMethodEnum } from '../dto/orders/initiate-payment.dto.js';
-import { PaymentWebhookDto } from '../dto/orders/payment-webhook.dto.js';
+import { InitiatePaymentDto } from '../dto/orders/initiate-payment.dto.js';
 import { OrdersService } from '../services/orders.service.js';
-import { MockGatewayService } from '../services/mock-gateway.service.js';
 import { VnpayService } from '../services/vnpay.service.js';
 
 @ApiTags('Payments')
@@ -31,63 +27,50 @@ export class PaymentsController {
 
   constructor(
     private readonly ordersService: OrdersService,
-    private readonly mockGatewayService: MockGatewayService,
     private readonly vnpayService: VnpayService
   ) {}
 
   /**
-   * 1. Khách hàng bấm thanh toán -> Sinh phiên thanh toán (VietQR hoặc VNPay Sandbox URL)
+   * 1. Khách hàng bấm thanh toán -> Sinh URL Cổng thanh toán VNPay Sandbox
+   * Hỗ trợ cả đơn PENDING và đơn PAYMENT_FAILED (khách thanh toán lại khi gặp lỗi thẻ/OTP)
    */
   @Post('initiate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Khởi tạo phiên thanh toán (VietQR Napas hoặc VNPay Sandbox)' })
+  @ApiOperation({
+    summary: 'Khởi tạo phiên thanh toán VNPay Sandbox (Hỗ trợ mở thẳng tab theo bankCode & thanh toán lại)',
+  })
   async initiatePayment(@Body() body: InitiatePaymentDto, @Req() req: Request) {
     const order = await this.ordersService.getOrderStatus(body.orderId);
 
-    if (order.status !== 'PENDING') {
+    // Cho phép thanh toán khi đơn ở trạng thái PENDING hoặc PAYMENT_FAILED (thanh toán lại)
+    if (order.status !== 'PENDING' && order.status !== 'PAYMENT_FAILED') {
       throw new BadRequestException(
         `Đơn hàng #${body.orderId} đang ở trạng thái "${order.status}", không thể khởi tạo thanh toán`
       );
     }
 
-    // Nếu chọn cổng thanh toán VNPay Sandbox chính thức:
-    if (body.method === PaymentMethodEnum.VNPAY) {
-      const clientIp =
-        (req.headers['x-forwarded-for'] as string)?.split(',')[0] ||
-        req.socket.remoteAddress ||
-        '127.0.0.1';
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0] ||
+      req.socket.remoteAddress ||
+      '127.0.0.1';
 
-      const vnpayUrl = this.vnpayService.createPaymentUrl({
-        orderId: order.orderId,
-        orderCode: order.orderCode,
-        amount: order.total,
-        ipAddr: clientIp,
-      });
-
-      return {
-        orderId: order.orderId,
-        orderCode: order.orderCode,
-        total: order.total,
-        method: PaymentMethodEnum.VNPAY,
-        paymentUrl: vnpayUrl,
-      };
-    }
-
-    // Mặc định: Sinh mã VietQR Napas 24/7 động
-    const intent = this.mockGatewayService.createPaymentIntent(
-      order.orderId,
-      order.orderCode,
-      order.total
-    );
+    const vnpayUrl = this.vnpayService.createPaymentUrl({
+      orderId: order.orderId,
+      orderCode: order.orderCode,
+      amount: order.total,
+      ipAddr: clientIp,
+      bankCode: body.bankCode,
+    });
 
     return {
       orderId: order.orderId,
       orderCode: order.orderCode,
       total: order.total,
       method: body.method,
-      paymentIntent: intent,
+      bankCode: body.bankCode || null,
+      paymentUrl: vnpayUrl,
     };
   }
 
@@ -95,7 +78,7 @@ export class PaymentsController {
    * 2. Xử lý phản hồi từ Cổng VNPay Sandbox sau khi khách thanh toán
    */
   @Get('vnpay/return')
-  @ApiOperation({ summary: 'Xác minh chữ ký số và kết quả giao dịch VNPay Sandbox Return' })
+  @ApiOperation({ summary: 'Xác minh chữ ký số HMAC-SHA512 và kết quả giao dịch VNPay Sandbox Return' })
   async handleVnpayReturn(@Query() query: Record<string, string>) {
     this.logger.log(`[VNPay Callback] Nhận phản hồi thanh toán cho TxnRef: ${query.vnp_TxnRef}`);
 
@@ -109,18 +92,28 @@ export class PaymentsController {
     if (!verifyResult.isSuccess) {
       this.logger.warn(`[VNPay Callback] Giao dịch thất bại hoặc bị hủy với mã lỗi: ${verifyResult.responseCode}`);
 
-      // Nếu khách hủy giao dịch hoặc thanh toán không thành công -> Cập nhật sang CANCELLED và hoàn kho
+      const isCancelledByCustomer = verifyResult.responseCode === '24';
+
       if (verifyResult.orderId) {
         try {
           const currentOrder = await this.ordersService.getOrderStatus(verifyResult.orderId);
+
           if (currentOrder.status === 'PENDING' || currentOrder.status === 'PAYMENT_FAILED') {
-            await this.ordersService.cancelOrder(
-              verifyResult.orderId,
-              `VNPay: ${verifyResult.message || 'Khách hàng hủy thanh toán'}`
-            );
+            if (isCancelledByCustomer) {
+              // Khách chủ động bấm Hủy trên VNPay (Mã 24) -> Chuyển sang CANCELLED và hoàn tồn kho ngay
+              await this.ordersService.cancelOrder(
+                verifyResult.orderId,
+                'Khách hàng chủ động bấm Hủy giao dịch trên Cổng VNPay'
+              );
+            } else {
+              // Lỗi thanh toán (Mã khác 24: không đủ tiền, sai OTP...) -> Chuyển PAYMENT_FAILED để khách thử lại
+              if (currentOrder.status !== 'PAYMENT_FAILED') {
+                await this.ordersService.updateStatus(verifyResult.orderId, 'PAYMENT_FAILED' as any);
+              }
+            }
           }
         } catch (err) {
-          this.logger.error(`[VNPay Callback] Lỗi khi hủy đơn #${verifyResult.orderId}: ${(err as Error).message}`);
+          this.logger.error(`[VNPay Callback] Lỗi khi xử lý trạng thái đơn #${verifyResult.orderId}: ${(err as Error).message}`);
         }
       }
 
@@ -128,7 +121,10 @@ export class PaymentsController {
         success: false,
         orderId: verifyResult.orderId,
         responseCode: verifyResult.responseCode,
-        message: verifyResult.message,
+        isCancelled: isCancelledByCustomer,
+        message: isCancelledByCustomer
+          ? 'Bạn đã hủy giao dịch trên Cổng VNPay. Đơn hàng đã được hủy và tồn kho đã hoàn trả lại quán.'
+          : verifyResult.message,
       };
     }
 
@@ -153,59 +149,7 @@ export class PaymentsController {
   }
 
   /**
-   * 3. Máy chủ Ngân hàng bắn Webhook (Server-to-Server IPN) kèm chữ ký số HMAC-SHA256
-   */
-  @Post('webhook')
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Webhook nhận kết quả thanh toán từ Ngân hàng (Xác minh chữ ký số HMAC)' })
-  async handleWebhook(
-    @Headers('x-signature') signature: string,
-    @Body() body: PaymentWebhookDto
-  ) {
-    this.logger.log(`[Webhook Inbound] Nhận Webhook cho đơn #${body.orderId} - Txn: ${body.transactionRef}`);
-
-    // BẮT BUỘC: Kiểm tra chữ ký số HMAC để ngăn chặn giả mạo gói tin
-    const isValidSignature = this.mockGatewayService.verifySignature(body, signature);
-    if (!isValidSignature) {
-      this.logger.error(`[Webhook Inbound] Chữ ký số không hợp lệ! Signature: ${signature}`);
-      throw new ForbiddenException('Chữ ký số Webhook không hợp lệ! Giao dịch bị từ chối.');
-    }
-
-    // Chữ ký hợp lệ -> Chuyển vào Service xử lý cập nhật trạng thái đơn
-    return this.ordersService.processPaymentWebhook(body);
-  }
-
-  /**
-   * 4. Giả lập Ngân hàng chuyển khoản thành công (Dành riêng cho Demo / Trình bày trên lớp)
-   */
-  @Post('mock-bank/confirm')
-  @ApiOperation({ summary: 'Mô phỏng app Mobile Banking quét mã và gửi Webhook thành công' })
-  async mockBankConfirm(@Body('orderId', ParseIntPipe) orderId: number) {
-    const order = await this.ordersService.getOrderStatus(orderId);
-    if (order.status !== 'PENDING') {
-      throw new BadRequestException(`Đơn hàng #${orderId} không ở trạng thái PENDING`);
-    }
-
-    // Đóng gói dữ liệu thanh toán từ phía ngân hàng
-    const webhookPayload: PaymentWebhookDto = {
-      transactionRef: `TXN_${Date.now()}_BL${orderId}`,
-      orderId: order.orderId,
-      amount: order.total,
-      status: 'SUCCESS',
-      message: `Chuyển khoản Napas247 cho đơn ${order.orderCode}`,
-    };
-
-    // Tạo chữ ký số hợp lệ từ Cổng thanh toán
-    const validSignature = this.mockGatewayService.generateSignature(webhookPayload);
-
-    this.logger.log(`[Mock Bank Simulator] Bắn Webhook chuyển tiền cho đơn #${orderId}...`);
-
-    // Tự động gọi vào Webhook xử lý
-    return this.handleWebhook(validSignature, webhookPayload);
-  }
-
-  /**
-   * 5. Kiểm tra trạng thái đơn hàng (Dành cho Frontend Polling)
+   * 3. Kiểm tra trạng thái đơn hàng (Dành cho Frontend Polling realtime)
    */
   @Get('status/:orderId')
   @ApiOperation({ summary: 'Kiểm tra trạng thái đơn hàng (Polling realtime)' })

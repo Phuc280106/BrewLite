@@ -129,6 +129,23 @@ export class VnpayService {
       `[VNPay Return] Kết quả đơn #${orderId}: ResponseCode=${responseCode}, ValidSignature=${isValid}, Success=${isSuccess}`
     );
 
+    const errorMessages: Record<string, string> = {
+      '07': 'Trừ tiền thành công nhưng giao dịch bị nghi ngờ bất thường.',
+      '09': 'Thẻ/Tài khoản chưa đăng ký dịch vụ Internet Banking.',
+      '10': 'Xác thực thông tin thẻ/tài khoản không đúng quá 3 lần.',
+      '11': 'Đã hết hạn chờ thanh toán trên Cổng VNPay.',
+      '12': 'Thẻ hoặc tài khoản ngân hàng đang bị khóa.',
+      '24': 'Khách hàng hủy giao dịch thanh toán.',
+      '51': 'Tài khoản không đủ số dư để thực hiện giao dịch.',
+      '65': 'Tài khoản đã vượt quá hạn mức thanh toán trong ngày.',
+      '75': 'Ngân hàng thanh toán đang bảo trì hệ thống.',
+      '79': 'Nhập sai mã OTP quá số lần quy định.',
+    };
+
+    const message = isSuccess
+      ? 'Giao dịch VNPay thành công'
+      : (errorMessages[responseCode] || `Giao dịch không thành công (Mã lỗi: ${responseCode})`);
+
     return {
       isValid,
       isSuccess,
@@ -136,9 +153,7 @@ export class VnpayService {
       amount,
       transactionNo,
       responseCode,
-      message: isSuccess
-        ? 'Giao dịch VNPay thành công'
-        : `Giao dịch thất bại (Mã lỗi: ${responseCode})`,
+      message,
     };
   }
 }

@@ -17,6 +17,7 @@ export default function OrderHistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [payingOrderId, setPayingOrderId] = useState<number | null>(null);
 
   const fetchOrders = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
@@ -43,6 +44,26 @@ export default function OrderHistoryPage() {
     }
   }, [user, fetchOrders]);
 
+  // Xử lý thanh toán lại hoặc thanh toán ngay cho đơn PENDING / PAYMENT_FAILED
+  const handlePayOrder = async (orderId: number) => {
+    setPayingOrderId(orderId);
+    try {
+      const res = await api.post<{ paymentUrl: string }>('/payments/initiate', {
+        orderId,
+        method: 'VNPAY',
+      });
+      if (res.data.paymentUrl) {
+        window.location.href = res.data.paymentUrl;
+      } else {
+        throw new Error('Không nhận được liên kết thanh toán từ Cổng VNPay');
+      }
+    } catch (err: unknown) {
+      console.error('Failed to initiate payment:', err);
+      alert('Không thể khởi tạo thanh toán cho đơn hàng này. Vui lòng thử lại sau.');
+      setPayingOrderId(null);
+    }
+  };
+
   const formatMoney = (val: number) => `${val.toLocaleString('vi-VN')} ₫`;
 
   const formatDate = (dateStr: string) => {
@@ -67,6 +88,12 @@ export default function OrderHistoryPage() {
           label: 'Chờ thanh toán',
           bg: 'bg-amber-100 text-amber-900 border-amber-300',
           dot: 'bg-amber-500',
+        };
+      case 'PAYMENT_FAILED':
+        return {
+          label: 'Chưa thanh toán / Bị hủy',
+          bg: 'bg-rose-100 text-rose-800 border-rose-300',
+          dot: 'bg-rose-500',
         };
       case 'PAID':
         return {
@@ -281,6 +308,7 @@ export default function OrderHistoryPage() {
               );
               const stepIdx = getStepIndex(order.status);
               const isPending = order.status === 'PENDING';
+              const isPaymentFailed = order.status === 'PAYMENT_FAILED';
               const isCancelled = order.status === 'CANCELLED';
               const isCompleted = order.status === 'COMPLETED';
 
@@ -315,11 +343,32 @@ export default function OrderHistoryPage() {
                     </div>
                   </div>
 
-                  {/* TH1: PENDING - Thông báo đơn mới tạo */}
-                  {isPending && (
-                    <div className="my-4 p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-xs font-medium text-amber-900 flex items-center gap-2">
-                      <span>⏳</span>
-                      <span>Đơn hàng mới tạo (PENDING), chờ thanh toán để chuyển sang quầy Barista pha chế.</span>
+                  {/* TH1: PENDING hoặc PAYMENT_FAILED - Cho phép thanh toán ngay */}
+                  {(isPending || isPaymentFailed) && (
+                    <div className="my-4 p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 text-xs font-medium text-amber-900 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span>{isPaymentFailed ? '⚠️' : '⏳'}</span>
+                        <span>
+                          {isPaymentFailed
+                            ? 'Thanh toán trước đó chưa thành công hoặc bị hủy. Bạn có thể bấm để thanh toán lại.'
+                            : 'Đơn hàng mới tạo (chưa thanh toán), sẵn sàng chuyển sang quầy Barista pha chế.'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handlePayOrder(order.id)}
+                        disabled={payingOrderId === order.id}
+                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {payingOrderId === order.id ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>Đang chuyển VNPay...</span>
+                          </>
+                        ) : (
+                          <span>💳 {isPaymentFailed ? 'Thanh toán lại qua VNPay' : 'Thanh toán VNPay ngay'}</span>
+                        )}
+                      </button>
                     </div>
                   )}
 
