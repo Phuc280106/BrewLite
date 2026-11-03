@@ -15,7 +15,7 @@ interface OptionsState {
   toppings: ProductToppingOption[];
   isLoading: boolean;
   hasLoaded: boolean;
-  fetchOptions: () => Promise<void>;
+  fetchOptions: (force?: boolean) => Promise<void>;
 }
 
 export const useOptionsStore = create<OptionsState>((set, get) => ({
@@ -23,8 +23,8 @@ export const useOptionsStore = create<OptionsState>((set, get) => ({
   toppings: DEFAULT_PRODUCT_TOPPINGS,
   isLoading: false,
   hasLoaded: false,
-  fetchOptions: async () => {
-    if (get().isLoading || get().hasLoaded) return;
+  fetchOptions: async (force = false) => {
+    if (get().isLoading || (!force && get().hasLoaded)) return;
     set({ isLoading: true });
     try {
       const response = await api.get<ProductOptionsResponse>('/options');
@@ -45,3 +45,9 @@ export const useOptionsStore = create<OptionsState>((set, get) => ({
     }
   },
 }));
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('brewlite:refresh-products', () => {
+    void useOptionsStore.getState().fetchOptions(true);
+  });
+}

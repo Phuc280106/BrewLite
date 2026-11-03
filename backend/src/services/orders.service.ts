@@ -433,13 +433,14 @@ export class OrdersService {
 
       const orderItems = input.items.map((item) => {
         const product = productsById.get(item.productId)!;
-        const toppingsPrice = item.toppings.reduce((total, toppingKey) => {
+        const itemToppings = item.toppings || [];
+        const toppingsPrice = itemToppings.reduce((total, toppingKey) => {
           const matched = this.resolveTopping(toppingKey, dbToppings);
           return total + (matched?.price ?? TOPPING_PRICE[toppingKey] ?? 0);
         }, 0);
         const price = product.price + SIZE_EXTRA_PRICE[item.size] + toppingsPrice;
 
-        const resolvedToppingNames = item.toppings.map((t) => {
+        const resolvedToppingNames = itemToppings.map((t) => {
           const matched = this.resolveTopping(t, dbToppings);
           return matched ? matched.name : t;
         });
@@ -447,7 +448,7 @@ export class OrdersService {
         return {
           productId: item.productId,
           size: item.size,
-          toppings: item.toppings.length > 0 ? JSON.stringify(resolvedToppingNames) : null,
+          toppings: itemToppings.length > 0 ? JSON.stringify(resolvedToppingNames) : null,
           price,
           qty: item.quantity,
           lineTotal: price * item.quantity,

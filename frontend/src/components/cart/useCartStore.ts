@@ -134,7 +134,7 @@ export const useCartStore = create<CartStore>()((set) => ({
 
     if (reachedLimit) {
       set({
-        toastMessage: `Đã đạt số ly tối đa có thể pha chế (${limitVal} ly)!`,
+        toastMessage: 'Đã đạt số lượng tối đa có thể đặt!',
       });
       if (toastTimeout) clearTimeout(toastTimeout);
       toastTimeout = setTimeout(() => set({ toastMessage: null }), 3000);

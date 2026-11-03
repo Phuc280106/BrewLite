@@ -236,9 +236,7 @@ export default function PaymentModal({
           items: cart.map(({ productId, size, toppings, quantity }) => ({
             productId,
             size,
-            toppings: (toppings || []).filter((t) =>
-              ['pearl', 'cheese', 'peach_jelly'].includes(t)
-            ),
+            toppings: Array.isArray(toppings) ? toppings : [],
             quantity,
           })),
           couponCode: appliedPromotion ? appliedPromotion.code : undefined,

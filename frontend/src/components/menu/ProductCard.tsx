@@ -58,12 +58,6 @@ export default function ProductCard({
       <div className="product-details">
         <h4>{product.name}</h4>
         <p className="product-note">{product.note}</p>
-        {isOutOfStock && (
-          <p className="stock text-rose-500 font-medium">
-            <span className="!bg-rose-500" />
-            Hết nguyên liệu pha chế
-          </p>
-        )}
 
         <div className="product-bottom">
           <strong>{formatMoney(product.price)}</strong>
@@ -77,9 +71,9 @@ export default function ProductCard({
             disabled={remainingStock <= 0 || isOutOfStock}
             title={
               isOutOfStock
-                ? 'Đã hết nguyên liệu pha chế'
+                ? 'Hết hàng'
                 : remainingStock <= 0
-                ? 'Đã chọn số lượng tối đa có thể pha chế'
+                ? 'Đã đạt số lượng tối đa'
                 : 'Chọn size và topping'
             }
           >
