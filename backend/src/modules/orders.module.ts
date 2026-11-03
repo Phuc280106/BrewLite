@@ -5,13 +5,12 @@ import { AuthModule } from './auth.module.js';
 import { OrdersController } from '../controllers/orders.controller.js';
 import { PaymentsController } from '../controllers/payments.controller.js';
 import { OrdersService } from '../services/orders.service.js';
-import { MockGatewayService } from '../services/mock-gateway.service.js';
 import { OrderExpiryService } from '../services/order-expiry.service.js';
 import { VnpayService } from '../services/vnpay.service.js';
 
 @Module({
   imports: [ScheduleModule.forRoot(), DatabaseModule, AuthModule],
   controllers: [OrdersController, PaymentsController],
-  providers: [OrdersService, MockGatewayService, VnpayService, OrderExpiryService],
+  providers: [OrdersService, VnpayService, OrderExpiryService],
 })
 export class OrdersModule {}

@@ -54,4 +54,13 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   couponCode?: string;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Số điểm tích lũy thành viên sử dụng để giảm tiền (1 điểm = 1.000đ)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  pointsUsed?: number;
 }

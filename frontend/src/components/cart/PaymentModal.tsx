@@ -1,20 +1,65 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useCartStore } from './useCartStore';
 import {
   CartItem,
   CreateOrderResponse,
   InitiatePaymentResponse,
-  OrderStatusResponse,
-  PaymentIntent,
-  PaymentMethod,
   Promotion,
   ValidatePromotionResponse,
 } from '@/types';
+
+export interface VnpayPaymentOption {
+  id: string;
+  bankCode?: string;
+  name: string;
+  tag: string;
+  tagColor: string;
+  desc: string;
+  icon: string;
+}
+
+export const VNPAY_PAYMENT_OPTIONS: VnpayPaymentOption[] = [
+  {
+    id: 'VNPAY_ALL',
+    bankCode: undefined,
+    name: 'Cổng VNPay',
+    tag: 'Sandbox',
+    tagColor: 'bg-blue-600 text-white',
+    desc: 'Tự chọn phương thức tại Cổng thanh toán VNPay',
+    icon: '🏦',
+  },
+  {
+    id: 'VNPAY_QR',
+    bankCode: 'VNPAYQR',
+    name: 'VNPAY-QR',
+    tag: 'App Bank',
+    tagColor: 'bg-rose-600 text-white',
+    desc: 'Quét mã QR từ hơn 40 ứng dụng ngân hàng & ví điện tử',
+    icon: '📱',
+  },
+  {
+    id: 'VNPAY_ATM',
+    bankCode: 'VNBANK',
+    name: 'Thẻ ATM nội địa',
+    tag: 'Napas',
+    tagColor: 'bg-emerald-600 text-white',
+    desc: 'Tài khoản & Thẻ ATM các ngân hàng nội địa (NCB, Vietcombank...)',
+    icon: '🏧',
+  },
+  {
+    id: 'VNPAY_INT',
+    bankCode: 'INTCARD',
+    name: 'Thẻ quốc tế',
+    tag: 'Visa/Master',
+    tagColor: 'bg-purple-600 text-white',
+    desc: 'Thẻ thanh toán quốc tế Visa, MasterCard, JCB',
+    icon: '💳',
+  },
+];
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -31,10 +76,9 @@ export default function PaymentModal({
 }: PaymentModalProps) {
   const user = useAuthStore((state) => state.user);
   const openAuthModal = useAuthStore((state) => state.openAuthModal);
-  const clearCart = useCartStore((state) => state.clearCart);
 
-  // Phương thức thanh toán
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('VNPAY');
+  // Tùy chọn thanh toán VNPay được chọn
+  const [selectedOptionId, setSelectedOptionId] = useState<string>('VNPAY_ALL');
 
   // Khuyến mãi
   const [couponInput, setCouponInput] = useState('');
@@ -44,28 +88,15 @@ export default function PaymentModal({
   const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
 
-  // Trạng thái phiên thanh toán
+  // Điểm thưởng tích lũy (Loyalty Points)
+  const [pointsInput, setPointsInput] = useState<string>('');
+
+  // Trạng thái khởi tạo thanh toán
   const [isInitiating, setIsInitiating] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [pendingOrderId, setPendingOrderId] = useState<number | null>(null);
-  const [pendingOrderCode, setPendingOrderCode] = useState<string | null>(null);
-  const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
-  const [isAwaitingPayment, setIsAwaitingPayment] = useState(false);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // Màn hình thành công (PAID)
-  const [paidResult, setPaidResult] = useState<{
-    orderCode: string;
-    amount: number;
-    methodTitle: string;
-    loyaltyPointsEarned?: number;
-    discount: number;
-    couponCode?: string | null;
-  } | null>(null);
-
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Lấy danh sách mã khuyến mãi gợi ý từ server khi mở modal
+  // Lấy danh sách mã khuyến mãi gợi ý khi mở modal
   useEffect(() => {
     if (!isOpen) return;
 
@@ -118,77 +149,25 @@ export default function PaymentModal({
     void fetchPromotions();
   }, [isOpen]);
 
-  const discountAmount = appliedPromotion ? appliedPromotion.discount : 0;
-  const finalTotal = Math.max(0, subtotal - discountAmount);
-
-  // Polling Realtime kiểm tra trạng thái đơn hàng khi đang ở màn hình chờ quét QR
-  useEffect(() => {
-    if (!isAwaitingPayment || !pendingOrderId) {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-      return;
-    }
-
-    const checkOrderStatus = async () => {
-      try {
-        const res = await api.get<OrderStatusResponse>(
-          `/payments/status/${pendingOrderId}`
-        );
-
-        if (res.data.status === 'PAID') {
-          // Ngân hàng đã xác nhận Webhook thành công!
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current);
-            pollingRef.current = null;
-          }
-
-          setPaidResult({
-            orderCode:
-              res.data.orderCode ||
-              `BL-${String(pendingOrderId).padStart(6, '0')}`,
-            amount: res.data.total,
-            methodTitle: getMethodTitle(selectedMethod),
-            loyaltyPointsEarned: Math.floor(res.data.total / 10000),
-            discount: res.data.discount || discountAmount,
-            couponCode: res.data.couponCode || appliedPromotion?.code,
-          });
-
-          // Làm sạch giỏ hàng
-          clearCart();
-          setIsAwaitingPayment(false);
-          setPendingOrderId(null);
-          setPendingOrderCode(null);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
-          }
-        } else if (res.data.status === 'PAYMENT_FAILED') {
-          setPaymentError('Ngân hàng từ chối thanh toán. Vui lòng thử lại.');
-          setIsAwaitingPayment(false);
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current);
-            pollingRef.current = null;
-          }
-        }
-      } catch (err) {
-        console.warn('Lỗi kiểm tra trạng thái đơn:', err);
-      }
-    };
-
-    // Kiểm tra ngay 1 lần và lập lịch mỗi 2 giây
-    void checkOrderStatus();
-    pollingRef.current = setInterval(checkOrderStatus, 2000);
-
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    };
-  }, [isAwaitingPayment, pendingOrderId, selectedMethod, discountAmount, appliedPromotion, clearCart]);
-
   if (!isOpen) return null;
+
+  const discountAmount = appliedPromotion ? appliedPromotion.discount : 0;
+  const subtotalAfterCoupon = Math.max(0, subtotal - discountAmount);
+
+  // Tỉ lệ: 1 điểm = 1.000 VNĐ
+  const userPoints = user?.loyaltyPoints || 0;
+  const maxPointsCanUse = Math.min(
+    userPoints,
+    Math.floor(subtotalAfterCoupon / 1000)
+  );
+
+  const parsedPoints = parseInt(pointsInput, 10);
+  const pointsUsed =
+    !isNaN(parsedPoints) && parsedPoints > 0
+      ? Math.min(parsedPoints, maxPointsCanUse)
+      : 0;
+  const pointDiscount = pointsUsed * 1000;
+  const finalTotal = Math.max(0, subtotalAfterCoupon - pointDiscount);
 
   const formatMoney = (val: number) =>
     `${Math.round(val).toLocaleString('vi-VN')} ₫`;
@@ -207,10 +186,11 @@ export default function PaymentModal({
     setCouponError(null);
 
     try {
+      const userParam = user ? `&userId=${user.id}` : '';
       const res = await api.get<ValidatePromotionResponse>(
         `/orders/promotions/validate?code=${encodeURIComponent(
           cleanCode
-        )}&subtotal=${subtotal}`
+        )}&subtotal=${subtotal}${userParam}`
       );
       setAppliedPromotion(res.data);
       setCouponInput(cleanCode);
@@ -235,21 +215,7 @@ export default function PaymentModal({
     setCouponError(null);
   };
 
-  // Tên hiển thị của phương thức
-  function getMethodTitle(method: PaymentMethod) {
-    switch (method) {
-      case 'VIETQR':
-        return 'Chuyển khoản VietQR Napas 24/7';
-      case 'MOMO':
-        return 'Ví điện tử MoMo';
-      case 'VNPAY':
-        return 'Ví điện tử VNPay / VNPAY-QR';
-      case 'CARD':
-        return 'Thẻ ngân hàng / Thẻ quốc tế';
-    }
-  };
-
-  // 1. Xử lý bấm "Tiến hành thanh toán" -> Gọi POST /payments/initiate
+  // Xử lý bấm "Tiến hành thanh toán" -> Gọi Backend sinh URL VNPay Sandbox và Redirect
   const handleInitiatePayment = async () => {
     if (!user) {
       openAuthModal('login', 'Vui lòng đăng nhập để tiến hành thanh toán đơn hàng');
@@ -262,7 +228,6 @@ export default function PaymentModal({
     setPaymentError(null);
 
     let activeOrderId = pendingOrderId;
-    let activeOrderCode = pendingOrderCode;
 
     try {
       // 1. Tạo đơn hàng PENDING nếu chưa có
@@ -271,42 +236,47 @@ export default function PaymentModal({
           items: cart.map(({ productId, size, toppings, quantity }) => ({
             productId,
             size,
-            toppings: (toppings || []).filter((t) => ['pearl', 'cheese', 'peach_jelly'].includes(t)),
+            toppings: (toppings || []).filter((t) =>
+              ['pearl', 'cheese', 'peach_jelly'].includes(t)
+            ),
             quantity,
           })),
           couponCode: appliedPromotion ? appliedPromotion.code : undefined,
+          pointsUsed: pointsUsed > 0 ? pointsUsed : undefined,
         });
 
         activeOrderId = orderRes.data.orderId;
-        activeOrderCode = orderRes.data.orderCode;
         setPendingOrderId(activeOrderId);
-        setPendingOrderCode(activeOrderCode);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
         }
       }
 
-      // 2. Gọi Cổng thanh toán để tạo phiên thanh toán & sinh VietQR
+      const selectedOpt =
+        VNPAY_PAYMENT_OPTIONS.find((opt) => opt.id === selectedOptionId) ||
+        VNPAY_PAYMENT_OPTIONS[0];
+
+      // 2. Khởi tạo phiên thanh toán VNPay Sandbox (kèm mã tab bankCode nếu có)
       const initRes = await api.post<InitiatePaymentResponse>(
         '/payments/initiate',
         {
           orderId: activeOrderId,
-          method: selectedMethod,
+          method: 'VNPAY',
+          bankCode: selectedOpt.bankCode,
         }
       );
 
-      // Nếu chọn VNPay: Chuyển hướng trình duyệt trực tiếp sang Cổng thanh toán VNPay Sandbox
+      // 3. Chuyển hướng trực tiếp sang Cổng VNPay Sandbox
       if (initRes.data.paymentUrl) {
         window.location.href = initRes.data.paymentUrl;
         return;
       }
 
-      setPaymentIntent(initRes.data.paymentIntent || null);
-      setIsAwaitingPayment(true);
+      throw new Error('Cổng thanh toán không trả về đường dẫn thanh toán hợp lệ');
     } catch (err) {
       console.error('Initiate payment error:', err);
       let errorMsg =
-        'Không thể khởi tạo phiên thanh toán. Vui lòng kiểm tra lại.';
+        'Không thể khởi tạo phiên thanh toán VNPay. Vui lòng kiểm tra lại.';
 
       if (axios.isAxiosError(err)) {
         if (err.response?.data?.message) {
@@ -318,50 +288,21 @@ export default function PaymentModal({
       }
 
       setPaymentError(errorMsg);
-    } finally {
       setIsInitiating(false);
     }
   };
 
-  const copyToClipboard = (text: string, fieldName: string) => {
-    void navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handleFinishAndClose = () => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-    setPaidResult(null);
-    setPaymentIntent(null);
-    setIsAwaitingPayment(false);
-    setPendingOrderId(null);
-    setPendingOrderCode(null);
-    setAppliedPromotion(null);
-    setCouponInput('');
-    setPaymentError(null);
-    onClose();
-  };
-
   const handleModalClose = () => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-    setIsAwaitingPayment(false);
     setPaymentError(null);
-    // Reset orderId de lan mo modal sau tao don moi, khong tai dung don cu (co the da CANCELLED)
     setPendingOrderId(null);
-    setPendingOrderCode(null);
+    setPointsInput('');
     onClose();
   };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn"
-      onClick={paidResult ? handleFinishAndClose : handleModalClose}
+      onClick={handleModalClose}
     >
       <div
         className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-stone-200/80 p-5 sm:p-7 relative text-stone-900"
@@ -370,460 +311,307 @@ export default function PaymentModal({
         {/* Nút đóng */}
         <button
           type="button"
-          onClick={paidResult ? handleFinishAndClose : handleModalClose}
-          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-stone-800 flex items-center justify-center font-bold text-sm transition-colors"
+          onClick={handleModalClose}
+          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-stone-800 flex items-center justify-center font-bold text-sm transition-colors cursor-pointer"
           aria-label="Đóng"
         >
           ✕
         </button>
 
-        {/* 1. MÀN HÌNH XÁC NHẬN THÀNH CÔNG (PAID) */}
-        {paidResult ? (
-          <div className="text-center py-4 space-y-5 animate-fadeIn">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner ring-8 ring-emerald-50">
-              <svg
-                className="w-8 h-8"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
+        <div className="space-y-5">
+          {/* Tiêu đề Modal */}
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 mb-2">
+              <span>🏦 Cổng VNPay Sandbox</span>
             </div>
-
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white tracking-wider uppercase mb-2 shadow-sm">
-                <span>Webhook Verified:</span>
-                <span className="bg-emerald-800/80 px-2 py-0.5 rounded-full">PAID</span>
-              </div>
-              <h2 className="text-2xl font-extrabold text-stone-900">
-                Thanh toán thành công!
-              </h2>
-            </div>
-
-            <div className="bg-stone-50 rounded-2xl p-4.5 text-left border border-stone-200/80 space-y-2.5 text-xs sm:text-sm">
-              <div className="flex justify-between items-center pb-2 border-b border-stone-200">
-                <span className="text-stone-500">Mã đơn hàng</span>
-                <span className="font-mono font-bold text-stone-900 text-sm">
-                  {paidResult.orderCode}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-stone-500">Phương thức</span>
-                <span className="font-semibold text-stone-800">
-                  {paidResult.methodTitle}
-                </span>
-              </div>
-
-              {paidResult.couponCode && (
-                <div className="flex justify-between items-center text-emerald-600">
-                  <span>Mã giảm giá đã dùng</span>
-                  <span className="font-semibold">
-                    {paidResult.couponCode} (-{formatMoney(paidResult.discount)})
-                  </span>
-                </div>
-              )}
-
-              {paidResult.loyaltyPointsEarned != null && paidResult.loyaltyPointsEarned > 0 && (
-                <div className="flex justify-between items-center text-amber-700 font-semibold bg-amber-50 p-2 rounded-xl border border-amber-200">
-                  <span>Điểm thưởng tích lũy</span>
-                  <span>+{paidResult.loyaltyPointsEarned} điểm</span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center pt-2 border-t border-stone-200 text-base font-bold text-stone-900">
-                <span>Số tiền thanh toán</span>
-                <span className="text-emerald-700 font-mono">
-                  {formatMoney(paidResult.amount)}
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-stone-400">
-              Giỏ hàng của bạn đã được làm sạch tự động.
+            <h2 className="text-xl sm:text-2xl font-extrabold text-stone-900">
+              Thanh toán đơn hàng
+            </h2>
+            <p className="text-xs sm:text-sm text-stone-500 mt-1">
+              Kiểm tra ưu đãi và chọn phương thức thanh toán bảo mật qua Cổng VNPay
             </p>
-
-            <button
-              type="button"
-              onClick={handleFinishAndClose}
-              className="w-full py-3.5 px-4 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold rounded-2xl shadow-lg shadow-amber-600/25 transition-all text-sm flex items-center justify-center gap-2"
-            >
-              Hoàn tất & Tiếp tục gọi món
-            </button>
           </div>
-        ) : isAwaitingPayment && paymentIntent ? (
-          /* 2. MÀN HÌNH CHỜ QUÉT MÃ VIETQR NAPAS 24/7 */
-          <div className="py-2 space-y-4 animate-fadeIn">
-            <div className="text-center">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 mb-2">
-                <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping"></span>
-                <span>Chờ Ngân hàng xác nhận Webhook (PENDING)</span>
-              </div>
-              <h2 className="text-xl font-extrabold text-stone-900">
-                Quét mã VietQR Napas 24/7
-              </h2>
-              <p className="text-xs text-stone-500 mt-0.5">
-                Mở app Mobile Banking bất kỳ để quét mã và chuyển khoản tự động
-              </p>
-            </div>
 
-            {/* Khung QR Code */}
-            <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200 text-center flex flex-col items-center justify-center shadow-inner">
-              <div className="bg-white p-3 rounded-2xl shadow-md border border-stone-200 max-w-[220px]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={paymentIntent.qrCodeUrl}
-                  alt="VietQR Napas 24/7"
-                  className="w-full h-auto object-contain rounded-lg"
+          {/* Chọn 1 trong 4 hình thức thanh toán của VNPay */}
+          <div className="space-y-2.5">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-500">
+              Chọn phương thức thanh toán
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {VNPAY_PAYMENT_OPTIONS.map((opt) => {
+                const isSelected = selectedOptionId === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSelectedOptionId(opt.id)}
+                    className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative cursor-pointer ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50/70 shadow-sm ring-2 ring-blue-500/20'
+                        : 'border-stone-200 hover:border-stone-300 bg-white'
+                    }`}
+                  >
+                    <span className="text-2xl flex-shrink-0 mt-0.5">{opt.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-stone-900 truncate">
+                          {opt.name}
+                        </span>
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider ${opt.tagColor}`}
+                        >
+                          {opt.tag}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-stone-500 line-clamp-2 mt-0.5 leading-snug">
+                        {opt.desc}
+                      </span>
+                    </div>
+                    {isSelected && (
+                      <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-blue-200" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Khối Nhập mã khuyến mại (Coupon) */}
+          <div className="space-y-2.5 pt-2 border-t border-stone-100">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-500 flex items-center justify-between">
+              <span>Mã khuyến mãi</span>
+              {appliedPromotion && (
+                <span className="text-emerald-600 font-semibold lowercase">
+                  Đã áp dụng mã thành công
+                </span>
+              )}
+            </label>
+
+            {appliedPromotion ? (
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-emerald-800 font-mono text-sm">
+                    {appliedPromotion.code}
+                  </span>
+                  <span className="text-emerald-700">
+                    - Giảm {formatMoney(appliedPromotion.discount)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveCoupon}
+                  className="text-stone-400 hover:text-stone-700 font-bold px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors"
+                >
+                  Gỡ bỏ
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={couponInput}
+                  onChange={(e) => {
+                    setCouponInput(e.target.value);
+                    if (couponError) setCouponError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleApplyCoupon();
+                    }
+                  }}
+                  placeholder="Nhập mã voucher (BREW10, CHAOBAN...)"
+                  className="flex-1 px-3.5 py-2.5 text-xs rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono uppercase bg-stone-50"
                 />
-              </div>
-
-              <div className="mt-3 text-xs text-stone-500 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Hệ thống đang tự động lắng nghe Webhook...</span>
-              </div>
-            </div>
-
-            {/* Thông tin chuyển khoản sao chép */}
-            <div className="bg-stone-50/80 rounded-2xl p-3.5 border border-stone-200 space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-stone-500">Ngân hàng thụ hưởng:</span>
-                <span className="font-bold text-stone-800">
-                  {paymentIntent.bankInfo.bankName}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-stone-500">Số tài khoản:</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono font-bold text-stone-900">
-                    {paymentIntent.bankInfo.accountNo}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyToClipboard(
-                        paymentIntent.bankInfo.accountNo,
-                        'accountNo'
-                      )
-                    }
-                    className="text-[10px] text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded font-semibold transition-colors"
-                  >
-                    {copiedField === 'accountNo' ? 'Đã chép!' : 'Chép'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-stone-500">Chủ tài khoản:</span>
-                <span className="font-semibold text-stone-800">
-                  {paymentIntent.bankInfo.accountName}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-stone-500">Nội dung chuyển khoản:</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                    {paymentIntent.orderCode.replace('-', '')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyToClipboard(
-                        paymentIntent.orderCode.replace('-', ''),
-                        'content'
-                      )
-                    }
-                    className="text-[10px] text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded font-semibold transition-colors"
-                  >
-                    {copiedField === 'content' ? 'Đã chép!' : 'Chép'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center pt-2 border-t border-stone-200 font-bold">
-                <span className="text-stone-700">Tổng số tiền:</span>
-                <span className="text-emerald-700 text-sm font-mono">
-                  {formatMoney(paymentIntent.amount)}
-                </span>
-              </div>
-            </div>
-
-            {paymentError && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-                {paymentError}
+                <button
+                  type="button"
+                  onClick={() => void handleApplyCoupon()}
+                  disabled={isValidatingCoupon || !couponInput.trim()}
+                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-40 transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  {isValidatingCoupon ? 'Đang kiểm tra...' : 'Áp dụng'}
+                </button>
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setIsAwaitingPayment(false)}
-              className="w-full py-2 text-stone-500 hover:text-stone-800 font-semibold text-xs text-center"
-            >
-              ← Quay lại đổi phương thức khác
-            </button>
-          </div>
-        ) : (
-          /* 3. MÀN HÌNH CHỌN PHƯƠNG THỨC & ÁP MÃ GIẢM GIÁ (BƯỚC ĐẦU) */
-          <div className="space-y-5">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-stone-900">
-                Thanh toán đơn hàng
-              </h2>
-              <p className="text-xs sm:text-sm text-stone-500 mt-1">
-                Kiểm tra ưu đãi và chọn phương thức thanh toán để nhận mã VietQR
+            {couponError && (
+              <p className="text-[11px] text-rose-600 font-medium">
+                {couponError}
               </p>
-            </div>
+            )}
 
-            {/* Chọn phương thức thanh toán */}
-            <div className="space-y-2.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                Chọn phương thức thanh toán
-              </label>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                {/* 1. VNPay Sandbox (Cổng Sandbox Chính thức) */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedMethod('VNPAY')}
-                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                    selectedMethod === 'VNPAY'
-                      ? 'border-blue-600 bg-blue-50/60 shadow-sm'
-                      : 'border-stone-200 hover:border-stone-300 bg-white'
-                  }`}
-                >
-                  <span className="text-xl">🏦</span>
-                  <div>
-                    <div className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                      <span>Cổng VNPay</span>
-                      <span className="text-[9px] bg-blue-600 text-white font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                        Sandbox
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-blue-700 font-semibold block mt-0.5">
-                      Khuyên dùng · Đã kết nối Sandbox
-                    </span>
-                  </div>
-                  {selectedMethod === 'VNPAY' && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-600"></span>
-                  )}
-                </button>
-
-                {/* 2. VietQR Napas 24/7 */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedMethod('VIETQR')}
-                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                    selectedMethod === 'VIETQR'
-                      ? 'border-amber-600 bg-amber-50/50 shadow-sm'
-                      : 'border-stone-200 hover:border-stone-300 bg-white'
-                  }`}
-                >
-                  <span className="text-xl">⚡</span>
-                  <div>
-                    <div className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                      <span>VietQR Napas 24/7</span>
-                    </div>
-                    <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
-                      Quét mã chuyển khoản
-                    </span>
-                  </div>
-                  {selectedMethod === 'VIETQR' && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-600"></span>
-                  )}
-                </button>
-
-                {/* 3. MoMo */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedMethod('MOMO')}
-                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                    selectedMethod === 'MOMO'
-                      ? 'border-pink-600 bg-pink-50/50 shadow-sm'
-                      : 'border-stone-200 hover:border-stone-300 bg-white'
-                  }`}
-                >
-                  <span className="text-xl">👛</span>
-                  <div>
-                    <div className="text-xs font-bold text-stone-900">Ví MoMo</div>
-                    <span className="text-[10px] text-stone-400 block mt-0.5">
-                      Quét mã QR MoMo
-                    </span>
-                  </div>
-                  {selectedMethod === 'MOMO' && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-pink-600"></span>
-                  )}
-                </button>
-
-                {/* 4. Thẻ ngân hàng */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedMethod('CARD')}
-                  className={`p-3 rounded-2xl border-2 text-left transition-all flex items-start gap-2.5 relative ${
-                    selectedMethod === 'CARD'
-                      ? 'border-stone-800 bg-stone-50 shadow-sm'
-                      : 'border-stone-200 hover:border-stone-300 bg-white'
-                  }`}
-                >
-                  <span className="text-xl">💳</span>
-                  <div>
-                    <div className="text-xs font-bold text-stone-900">Thẻ ATM / Visa</div>
-                    <span className="text-[10px] text-stone-400 block mt-0.5">
-                      Thẻ nội địa & Quốc tế
-                    </span>
-                  </div>
-                  {selectedMethod === 'CARD' && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-stone-900"></span>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Khối Nhập mã khuyến mại (Coupon) */}
-            <div className="space-y-2.5 pt-2 border-t border-stone-100">
-              <label className="text-xs font-bold uppercase tracking-wider text-stone-500 flex items-center justify-between">
-                <span>Mã khuyến mãi</span>
-                {appliedPromotion && (
-                  <span className="text-emerald-600 font-semibold lowercase">
-                    Đã áp dụng mã thành công
-                  </span>
-                )}
-              </label>
-
-              {appliedPromotion ? (
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-emerald-800 font-mono text-sm">
-                      {appliedPromotion.code}
-                    </span>
-                    <span className="text-emerald-700">
-                      (Giảm {formatMoney(appliedPromotion.discount)})
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleRemoveCoupon}
-                    className="text-stone-400 hover:text-stone-700 font-bold px-2 py-1"
-                  >
-                    Gỡ bỏ
-                  </button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={couponInput}
-                    onChange={(e) => {
-                      setCouponInput(e.target.value);
-                      setCouponError(null);
-                    }}
-                    placeholder="Nhập mã: BREW10, CHAOBAN..."
-                    className="flex-1 px-3.5 py-2.5 rounded-2xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono uppercase text-xs sm:text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleApplyCoupon()}
-                    disabled={isValidatingCoupon || !couponInput.trim()}
-                    className="px-4 py-2.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-40 text-white font-bold rounded-2xl text-xs transition-colors"
-                  >
-                    {isValidatingCoupon ? 'Đang kiểm...' : 'Áp dụng'}
-                  </button>
-                </div>
-              )}
-
-              {couponError && (
-                <p className="text-xs text-rose-600 font-medium">{couponError}</p>
-              )}
-
-              {/* Danh sách chip mã ưu đãi gợi ý */}
-              {availablePromotions.length > 0 && !appliedPromotion && (
-                <div className="pt-1">
-                  <span className="text-[11px] text-stone-400 block mb-1.5">
-                    Mã gợi ý cho bạn:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {availablePromotions.map((p) => (
+            {/* Gợi ý mã khuyến mãi */}
+            {!appliedPromotion && availablePromotions.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[11px] font-semibold text-stone-400">
+                  Mã khuyến mãi có thể dùng:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {availablePromotions.map((p) => {
+                    const isEligible = subtotal >= (p.minOrder || 0);
+                    return (
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() => handleApplyCoupon(p.code)}
-                        className="px-2.5 py-1 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-mono text-[11px] font-semibold transition-colors flex items-center gap-1"
+                        onClick={() => void handleApplyCoupon(p.code)}
+                        className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                          isEligible
+                            ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                            : 'bg-stone-100 text-stone-400 border-stone-200 hover:bg-stone-200'
+                        }`}
+                        title={p.description || undefined}
                       >
-                        <span>{p.code}</span>
-                        <span className="text-[10px] text-amber-600">
-                          {p.discountPercent
-                            ? `-${p.discountPercent}%`
-                            : `-${formatMoney(p.discountAmount || 0)}`}
-                        </span>
+                        {p.code}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Khối Đổi điểm thưởng tích lũy (Loyalty Points) */}
+          <div className="space-y-2.5 pt-2 border-t border-stone-100">
+            <label className="text-xs font-bold uppercase tracking-wider text-stone-500 flex items-center justify-between">
+              <span>Điểm thưởng thành viên</span>
+              {user ? (
+                <span className="text-amber-800 font-bold font-mono">
+                  Khả dụng: {user.loyaltyPoints.toLocaleString('vi-VN')} điểm
+                </span>
+              ) : (
+                <span className="text-stone-400 font-normal lowercase text-[11px]">
+                  Đăng nhập để đổi điểm
+                </span>
               )}
+            </label>
+
+            {user ? (
+              <div className="space-y-2">
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="number"
+                    min={0}
+                    max={maxPointsCanUse}
+                    value={pointsInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') {
+                        setPointsInput('');
+                        return;
+                      }
+                      const num = parseInt(val, 10);
+                      if (isNaN(num) || num < 0) {
+                        setPointsInput('0');
+                      } else if (num > maxPointsCanUse) {
+                        setPointsInput(String(maxPointsCanUse));
+                      } else {
+                        setPointsInput(String(num));
+                      }
+                    }}
+                    placeholder={`Nhập điểm muốn dùng (tối đa ${maxPointsCanUse})`}
+                    className="flex-1 px-3.5 py-2.5 rounded-2xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs sm:text-sm"
+                  />
+                  <button
+                    type="button"
+                    disabled={maxPointsCanUse <= 0}
+                    onClick={() => setPointsInput(String(maxPointsCanUse))}
+                    className="px-3 py-2.5 bg-amber-100 hover:bg-amber-200 disabled:opacity-40 text-amber-900 font-bold rounded-2xl text-xs transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    Dùng tối đa
+                  </button>
+                  {pointsUsed > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPointsInput('')}
+                      className="px-2.5 py-2.5 text-stone-400 hover:text-stone-600 font-bold text-xs cursor-pointer"
+                    >
+                      Xóa
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center text-[11px] text-stone-500">
+                  <span>Tỉ lệ: 1 điểm = 1.000 ₫</span>
+                  {pointsUsed > 0 && (
+                    <span className="text-amber-700 font-semibold">
+                      Giảm thêm: -{formatMoney(pointDiscount)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 text-xs text-stone-600 flex justify-between items-center">
+                <span>Đăng nhập tài khoản để tích lũy và sử dụng điểm thưởng.</span>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login')}
+                  className="text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold underline ml-2 transition-colors cursor-pointer"
+                >
+                  Đăng nhập ngay
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Tóm tắt số tiền */}
+          <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 space-y-2 text-xs">
+            <div className="flex justify-between items-center text-stone-600">
+              <span>Tạm tính giỏ hàng ({cart.length} món):</span>
+              <span className="font-semibold">{formatMoney(subtotal)}</span>
             </div>
 
-            {/* Chi tiết tính tiền */}
-            <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 space-y-2 text-xs sm:text-sm">
-              <div className="flex justify-between items-center text-stone-500">
-                <span>Tạm tính giỏ hàng:</span>
-                <span className="font-semibold text-stone-800">
-                  {formatMoney(subtotal)}
-                </span>
-              </div>
-
-              {discountAmount > 0 && (
-                <div className="flex justify-between items-center text-emerald-600 font-semibold">
-                  <span>Khuyến mãi giảm trừ:</span>
-                  <span>-{formatMoney(discountAmount)}</span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center pt-2 border-t border-stone-200 text-base font-bold text-stone-900">
-                <span>Tổng thanh toán:</span>
-                <span className="text-amber-700 font-mono">
-                  {formatMoney(finalTotal)}
-                </span>
-              </div>
-            </div>
-
-            {paymentError && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-                {paymentError}
+            {appliedPromotion && (
+              <div className="flex justify-between items-center text-emerald-600 font-semibold">
+                <span>Khuyến mãi ({appliedPromotion.code}):</span>
+                <span>-{formatMoney(discountAmount)}</span>
               </div>
             )}
 
-            {/* Nút Khởi tạo thanh toán */}
-            <button
-              type="button"
-              onClick={handleInitiatePayment}
-              disabled={isInitiating || cart.length === 0}
-              className="w-full py-3.5 px-4 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:opacity-50 text-white font-bold rounded-2xl shadow-lg shadow-amber-600/25 transition-all text-sm flex items-center justify-center gap-2"
-            >
-              {isInitiating ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  <span>
-                    {selectedMethod === 'VNPAY'
-                      ? 'Đang chuyển hướng sang VNPay...'
-                      : 'Đang khởi tạo mã VietQR...'}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    {selectedMethod === 'VNPAY'
-                      ? `Chuyển sang Cổng VNPay Sandbox (${formatMoney(finalTotal)})`
-                      : `Lấy mã VietQR & Thanh toán (${formatMoney(finalTotal)})`}
-                  </span>
-                  <span>→</span>
-                </>
-              )}
-            </button>
+            {pointDiscount > 0 && (
+              <div className="flex justify-between items-center text-amber-700 font-semibold">
+                <span>Điểm thưởng giảm trừ ({pointsUsed} điểm):</span>
+                <span>-{formatMoney(pointDiscount)}</span>
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-stone-200 flex justify-between items-center text-sm font-extrabold text-stone-900">
+              <span>Tổng thanh toán:</span>
+              <span className="text-amber-700 font-mono text-base">
+                {formatMoney(finalTotal)}
+              </span>
+            </div>
           </div>
-        )}
+
+          {/* Thông báo lỗi thanh toán nếu có */}
+          {paymentError && (
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs space-y-1">
+              <div className="font-bold">Không thể tiếp tục thanh toán:</div>
+              <div>{paymentError}</div>
+            </div>
+          )}
+
+          {/* Nút hành động */}
+          <button
+            type="button"
+            onClick={handleInitiatePayment}
+            disabled={isInitiating || cart.length === 0}
+            className="w-full py-4 px-5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white font-extrabold rounded-2xl shadow-lg shadow-blue-600/25 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {isInitiating ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Đang kết nối Cổng VNPay...</span>
+              </>
+            ) : (
+              <>
+                <span>Tiến hành thanh toán</span>
+                <span className="font-normal opacity-90">({formatMoney(finalTotal)})</span>
+                <span>→</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

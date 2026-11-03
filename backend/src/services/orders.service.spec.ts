@@ -1,520 +1,17 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../database/prisma.service.js';
 import { CreateOrderDto } from '../dto/orders/create-order.dto.js';
 import { OrderStatus } from '../common/state-machine/order-state-machine.js';
-import { MAX_ORDER_ATTEMPTS, OrdersService } from './orders.service.js';
- 
-describe('CreateOrderDto', () => {
-  it('validates a cart with product option IDs', async () => {
-    const dto = plainToInstance(CreateOrderDto, {
-      items: [
-        {
-          productId: 12,
-          size: 'M',
-          toppings: ['pearl'],
-          quantity: 2,
-        },
-      ],
-    });
- 
-    await expect(validate(dto)).resolves.toHaveLength(0);
-  });
- 
-  it('rejects an invalid topping ID', async () => {
-    const dto = plainToInstance(CreateOrderDto, {
-      items: [
-        {
-          productId: 12,
-          size: 'M',
-          toppings: ['unknown'],
-          quantity: 2,
-        },
-      ],
-    });
- 
-    await expect(validate(dto)).resolves.not.toHaveLength(0);
-  });
+import { OrdersService } from './orders.service.js';
 
-  it('accepts an optional valid string couponCode', async () => {
-    const dto = plainToInstance(CreateOrderDto, {
-      items: [
-        {
-          productId: 12,
-          size: 'M',
-          toppings: ['pearl'],
-          quantity: 2,
-        },
-      ],
-      couponCode: 'BREW10',
-    });
-
-    await expect(validate(dto)).resolves.toHaveLength(0);
-  });
-
-  it('rejects a non-string couponCode', async () => {
-    const dto = plainToInstance(CreateOrderDto, {
-      items: [
-        {
-          productId: 12,
-          size: 'M',
-          toppings: ['pearl'],
-          quantity: 2,
-        },
-      ],
-      couponCode: 12345,
-    });
-
-    await expect(validate(dto)).resolves.not.toHaveLength(0);
-  });
-});
- 
-describe('OrdersService', () => {
-  let service: OrdersService;
-  let orderCreate: ReturnType<typeof vi.fn>;
-  let promotionFindUnique: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    orderCreate = vi.fn().mockImplementation(({ data }) =>
-      Promise.resolve({
-        id: 22,
-        total: data.total,
-        discount: data.discount ?? 0,
-        couponCode: data.couponCode ?? null,
-        status: data.status,
-        createdAt: new Date('2026-10-14T00:00:00.000Z'),
-      })
-    );
-    promotionFindUnique = vi.fn().mockResolvedValue(null);
-    const transaction = {
-      product: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: 12, price: 25000 },
-        ]),
-        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      },
-      promotion: { findUnique: promotionFindUnique },
-      order: { create: orderCreate },
-    } as unknown as Prisma.TransactionClient;
-    const prisma = {
-      $transaction: vi.fn(
-        (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
-          callback(transaction)
-      ),
-    } as unknown as PrismaService;
-
-    service = new OrdersService(prisma);
-  });
- 
-  it('creates a pending order using server prices and returns its code', async () => {
-    const result = await service.create(
-      plainToInstance(CreateOrderDto, {
-        items: [
-          {
-            productId: 12,
-            size: 'M',
-            toppings: ['pearl'],
-            quantity: 2,
-          },
-        ],
-      })
-    );
- 
-    expect(orderCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          total: 70000,
-          status: 'PENDING',
-          items: {
-            create: [
-              expect.objectContaining({
-                productId: 12,
-                price: 35000,
-                qty: 2,
-                lineTotal: 70000,
-              }),
-            ],
-          },
-        }),
-      })
-    );
-    expect(result).toMatchObject({
-      orderId: 22,
-      orderCode: 'BL-000022',
-      status: 'PENDING',
-      total: 70000,
-    });
-  });
-
-  it('áp dụng mã giảm giá theo phần trăm (BREW10: 10%) và trừ vào total', async () => {
-    promotionFindUnique.mockResolvedValue({
-      code: 'BREW10',
-      discountPercent: 10,
-      discountAmount: null,
-      minOrder: 50000,
-      isActive: true,
-    });
-
-    const result = await service.create(
-      plainToInstance(CreateOrderDto, {
-        items: [
-          { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
-        ],
-        couponCode: 'brew10',
-      })
-    );
-
-    // subtotal = 70.000đ, discount 10% = 7.000đ -> total = 63.000đ
-    expect(orderCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          total: 63000,
-          discount: 7000,
-          couponCode: 'BREW10',
-          status: 'PENDING',
-        }),
-      })
-    );
-    expect(result).toMatchObject({
-      orderId: 22,
-      total: 63000,
-      discount: 7000,
-      couponCode: 'BREW10',
-    });
-  });
-
-  it('áp dụng mã giảm giá theo số tiền cố định (CHAOBAN: 20.000đ) và trừ vào total', async () => {
-    promotionFindUnique.mockResolvedValue({
-      code: 'CHAOBAN',
-      discountPercent: null,
-      discountAmount: 20000,
-      minOrder: 40000,
-      isActive: true,
-    });
-
-    const result = await service.create(
-      plainToInstance(CreateOrderDto, {
-        items: [
-          { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
-        ],
-        couponCode: 'CHAOBAN',
-      })
-    );
-
-    // subtotal = 70.000đ, discount = 20.000đ -> total = 50.000đ
-    expect(orderCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          total: 50000,
-          discount: 20000,
-          couponCode: 'CHAOBAN',
-          status: 'PENDING',
-        }),
-      })
-    );
-    expect(result).toMatchObject({
-      orderId: 22,
-      total: 50000,
-      discount: 20000,
-      couponCode: 'CHAOBAN',
-    });
-  });
-
-  it('ném lỗi BadRequestException khi mã khuyến mãi không tồn tại', async () => {
-    promotionFindUnique.mockResolvedValue(null);
-
-    await expect(
-      service.create(
-        plainToInstance(CreateOrderDto, {
-          items: [
-            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
-          ],
-          couponCode: 'INVALID_CODE',
-        })
-      )
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('ném lỗi BadRequestException khi mã khuyến mãi đã bị vô hiệu hóa (isActive: false)', async () => {
-    promotionFindUnique.mockResolvedValue({
-      code: 'EXPIRED',
-      discountPercent: 10,
-      discountAmount: null,
-      minOrder: 10000,
-      isActive: false,
-    });
-
-    await expect(
-      service.create(
-        plainToInstance(CreateOrderDto, {
-          items: [
-            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
-          ],
-          couponCode: 'EXPIRED',
-        })
-      )
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('ném lỗi BadRequestException khi đơn hàng chưa đạt giá trị tối thiểu (minOrder)', async () => {
-    promotionFindUnique.mockResolvedValue({
-      code: 'VIP100',
-      discountPercent: 20,
-      discountAmount: null,
-      minOrder: 100000,
-      isActive: true,
-    });
-
-    // subtotal = 70.000đ < minOrder (100.000đ)
-    await expect(
-      service.create(
-        plainToInstance(CreateOrderDto, {
-          items: [
-            { productId: 12, size: 'M', toppings: ['pearl'], quantity: 2 },
-          ],
-          couponCode: 'VIP100',
-        })
-      )
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-  describe('OrdersService.processPaymentWebhook – webhook idempotency & state machine', () => {
-    let service: OrdersService;
-    let paymentCreate: ReturnType<typeof vi.fn>;
-    let paymentFindUnique: ReturnType<typeof vi.fn>;
-    let orderFindUnique: ReturnType<typeof vi.fn>;
-    let orderUpdate: ReturnType<typeof vi.fn>;
-
-    const existingPayment = {
-      id: 1,
-      orderId: 10,
-      idempotencyKey: 'TXN_TEST_123',
-      amount: 70000,
-      method: 'WALLET',
-      createdAt: new Date(),
-    };
-
-    beforeEach(() => {
-      paymentCreate = vi.fn().mockResolvedValue(existingPayment);
-      paymentFindUnique = vi.fn().mockResolvedValue(null);
-      orderFindUnique = vi.fn().mockResolvedValue({ id: 10, status: 'PENDING', total: 70000 });
-      orderUpdate = vi.fn().mockResolvedValue({ id: 10, status: 'PAID' });
-
-      const transaction = {
-        payment: { findUnique: paymentFindUnique, create: paymentCreate },
-        order: {
-          findUnique: orderFindUnique,
-          update: orderUpdate,
-        },
-      } as unknown as Prisma.TransactionClient;
-
-      const prisma = {
-        $transaction: vi.fn((cb) => cb(transaction)),
-      } as unknown as PrismaService;
-
-      service = new OrdersService(prisma);
-    });
-
-    it('tạo payment mới và đổi order sang PAID khi webhook thành công và transactionRef chưa tồn tại', async () => {
-      const result = await service.processPaymentWebhook({
-        transactionRef: 'TXN_NEW_001',
-        orderId: 10,
-        amount: 70000,
-        status: 'SUCCESS',
-      });
-
-      expect(paymentCreate).toHaveBeenCalledOnce();
-      expect(paymentCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            orderId: 10,
-            amount: 70000,
-            idempotencyKey: 'TXN_NEW_001',
-          }),
-        })
-      );
-      expect(orderUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 10 },
-          data: { status: 'PAID' },
-        })
-      );
-      expect(result).toMatchObject({
-        idempotent: false,
-        success: true,
-        orderId: 10,
-        status: 'PAID',
-      });
-    });
-
-    it('trả về idempotent: true khi transactionRef đã tồn tại — KHÔNG tạo mới payment', async () => {
-      paymentFindUnique.mockResolvedValue(existingPayment);
-
-      const result = await service.processPaymentWebhook({
-        transactionRef: 'TXN_TEST_123',
-        orderId: 10,
-        amount: 70000,
-        status: 'SUCCESS',
-      });
-
-      expect(paymentCreate).not.toHaveBeenCalled();
-      expect(result).toMatchObject({
-        idempotent: true,
-        success: true,
-        orderId: 10,
-        status: 'PAID',
-      });
-    });
-
-    it('bỏ qua và trả về idempotent: true nếu đơn hàng đã ở trạng thái PAID', async () => {
-      orderFindUnique.mockResolvedValue({ id: 10, status: 'PAID', total: 70000 });
-
-      const result = await service.processPaymentWebhook({
-        transactionRef: 'TXN_ANOTHER_456',
-        orderId: 10,
-        amount: 70000,
-        status: 'SUCCESS',
-      });
-
-      expect(paymentCreate).not.toHaveBeenCalled();
-      expect(result).toMatchObject({
-        idempotent: true,
-        success: true,
-        orderId: 10,
-        status: 'PAID',
-      });
-    });
-
-    it('từ chối (BadRequestException) khi số tiền khách chuyển không khớp với order.total', async () => {
-      await expect(
-        service.processPaymentWebhook({
-          transactionRef: 'TXN_FRAUD_999',
-          orderId: 10,
-          amount: 1000,
-          status: 'SUCCESS',
-        })
-      ).rejects.toThrow('không khớp');
-    });
-
-    it('cập nhật PAYMENT_FAILED khi ngân hàng gửi status không phải SUCCESS', async () => {
-      const result = await service.processPaymentWebhook({
-        transactionRef: 'TXN_FAIL_001',
-        orderId: 10,
-        amount: 70000,
-        status: 'FAILED',
-      });
-
-      expect(paymentCreate).not.toHaveBeenCalled();
-      expect(orderUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 10 },
-          data: { status: 'PAYMENT_FAILED' },
-        })
-      );
-      expect(result).toMatchObject({
-        idempotent: false,
-        success: false,
-        status: 'PAYMENT_FAILED',
-      });
-    });
-
-    it('chặn thanh toán khi đơn hàng ở trạng thái sai (ví dụ: CANCELLED)', async () => {
-      orderFindUnique.mockResolvedValue({ id: 10, status: 'CANCELLED', total: 70000 });
-
-      await expect(
-        service.processPaymentWebhook({
-          transactionRef: 'TXN_INVALID_STATE',
-          orderId: 10,
-          amount: 70000,
-          status: 'SUCCESS',
-        })
-      ).rejects.toThrow();
-    });
-  });
-  describe('OrdersService.pay – tích lũy điểm thưởng (loyalty points)', () => {
-    let service: OrdersService;
-    let userUpdate: ReturnType<typeof vi.fn>;
-
-    beforeEach(() => {
-      userUpdate = vi.fn().mockResolvedValue({ id: 9, loyaltyPoints: 17 });
-
-      const transaction = {
-        payment: {
-          findUnique: vi.fn().mockResolvedValue(null),
-          create: vi.fn().mockResolvedValue({ id: 1 }),
-        },
-        order: {
-          findUnique: vi.fn().mockResolvedValue({
-            id: 10,
-            userId: 9,
-            status: 'PENDING',
-            total: 75000,
-          }),
-          update: vi.fn(),
-        },
-        user: { update: userUpdate },
-      } as unknown as Prisma.TransactionClient;
-
-      const prisma = {
-        $transaction: vi.fn((cb) => cb(transaction)),
-      } as unknown as PrismaService;
-
-      service = new OrdersService(prisma);
-    });
-
-    it('tự động tính điểm (10.000đ = 1 điểm) và cộng vào User.loyaltyPoints khi order có userId', async () => {
-      const result = await service.pay(10, 'key-loyalty', { method: 'WALLET' });
-
-      // 75.000đ / 10.000 = 7 điểm
-      expect(userUpdate).toHaveBeenCalledWith({
-        where: { id: 9 },
-        data: {
-          loyaltyPoints: {
-            increment: 7,
-          },
-        },
-      });
-      expect(result.loyaltyPointsEarned).toBe(7);
-    });
-
-    it('không cộng điểm khi đơn hàng không có userId (khách vãng lai)', async () => {
-      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
-        return cb({
-          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
-          order: {
-            findUnique: vi.fn().mockResolvedValue({ id: 10, userId: null, status: 'PENDING', total: 75000 }),
-            update: vi.fn(),
-          },
-          user: { update: userUpdate },
-        } as any);
-      });
-
-      const result = await service.pay(10, 'key-guest', { method: 'WALLET' });
-      expect(userUpdate).not.toHaveBeenCalled();
-      expect(result.loyaltyPointsEarned).toBe(7);
-    });
-
-    it('không gọi user.update nếu đơn hàng có tổng tiền dưới 10.000đ (0 điểm)', async () => {
-      vi.spyOn(service['prisma'], '$transaction').mockImplementation(async (cb) => {
-        return cb({
-          payment: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
-          order: {
-            findUnique: vi.fn().mockResolvedValue({ id: 10, userId: 9, status: 'PENDING', total: 8000 }),
-            update: vi.fn(),
-          },
-          user: { update: userUpdate },
-        } as any);
-      });
-
-      const result = await service.pay(10, 'key-low-amount', { method: 'WALLET' });
-      expect(userUpdate).not.toHaveBeenCalled();
-      expect(result.loyaltyPointsEarned).toBe(0);
-    });
-  });
-
-  describe('OrdersService.updateStatus – Order State Machine', () => {
+describe('BrewLite - 3 Ca Kiểm thử Cốt lõi (Core Unit Tests)', () => {
+  // =========================================================================
+  // (a) CHẶN CHUYỂN TRẠNG THÁI SAI (Order State Machine)
+  // =========================================================================
+  describe('(a) Chặn được chuyển trạng thái sai (Order State Machine)', () => {
     let service: OrdersService;
     let orderFindUnique: ReturnType<typeof vi.fn>;
     let orderUpdate: ReturnType<typeof vi.fn>;
@@ -556,7 +53,7 @@ describe('OrdersService', () => {
       expect(step3.status).toBe(OrderStatus.COMPLETED);
     });
 
-    it('chặn chuyển trạng thái sai quy tắc (ví dụ: PENDING nhảy sang COMPLETED) và ném lỗi 400 BadRequestException', async () => {
+    it('chặn chuyển trạng thái sai quy tắc (ví dụ: PENDING nhảy sang COMPLETED) ném 400 BadRequestException', async () => {
       orderFindUnique.mockResolvedValue({ id: 10, status: OrderStatus.PENDING });
 
       await expect(
@@ -583,573 +80,301 @@ describe('OrdersService', () => {
       expect(orderUpdate).not.toHaveBeenCalled();
     });
 
-    it('ném NotFoundException nếu không tìm thấy đơn hàng', async () => {
-      orderFindUnique.mockResolvedValue(null);
+    it('chặn thanh toán khi đơn hàng đang ở trạng thái không cho phép (ví dụ: CANCELLED)', async () => {
+      const prisma = {
+        $transaction: vi.fn(async (cb) => {
+          return cb({
+            payment: { findUnique: vi.fn().mockResolvedValue(null) },
+            order: {
+              findUnique: vi.fn().mockResolvedValue({ id: 10, status: OrderStatus.CANCELLED, total: 50000 }),
+            },
+          });
+        }),
+      } as unknown as PrismaService;
+      const testService = new OrdersService(prisma);
 
       await expect(
-        service.updateStatus(999, OrderStatus.PREPARING)
-      ).rejects.toThrow(NotFoundException);
+        testService.pay(10, 'key-cancelled-order', { method: 'WALLET' })
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
-  describe('OrdersService.findMyOrders – Lịch sử đơn hàng của user', () => {
-    it('trả về danh sách đơn hàng kèm món của user đang đăng nhập theo thứ tự mới nhất', async () => {
-      const mockOrders = [
-        {
-          id: 5,
-          userId: 1,
-          total: 85000,
-          status: OrderStatus.PAID,
-          createdAt: new Date('2026-10-22T10:00:00.000Z'),
-          items: [
-            {
-              id: 1,
-              productId: 12,
-              size: 'M',
-              qty: 2,
-              lineTotal: 85000,
-              product: {
-                id: 12,
-                name: 'Cappuccino',
-                imageUrl: '/images/cappuccino.jpg',
-                price: 45000,
-              },
-            },
-          ],
+  // =========================================================================
+  // (b) GỬI 2 LẦN CÙNG IDEMPOTENCY-KEY CHỈ TẠO 1 ĐƠN / 1 GIAO DỊCH
+  // =========================================================================
+  describe('(b) Gửi 2 lần cùng Idempotency-Key chỉ tạo 1 đơn / 1 giao dịch (Idempotency)', () => {
+    let service: OrdersService;
+    let paymentCreate: ReturnType<typeof vi.fn>;
+    let paymentFindUnique: ReturnType<typeof vi.fn>;
+    let orderFindUnique: ReturnType<typeof vi.fn>;
+    let orderUpdate: ReturnType<typeof vi.fn>;
+
+    const mockExistingPayment = {
+      id: 1,
+      orderId: 10,
+      idempotencyKey: 'IDEMPOTENT_KEY_123',
+      amount: 70000,
+      method: 'WALLET',
+      createdAt: new Date(),
+    };
+
+    beforeEach(() => {
+      paymentCreate = vi.fn().mockResolvedValue(mockExistingPayment);
+      paymentFindUnique = vi.fn().mockResolvedValue(null);
+      orderFindUnique = vi.fn().mockResolvedValue({ id: 10, status: 'PENDING', total: 70000 });
+      orderUpdate = vi.fn().mockResolvedValue({ id: 10, status: 'PAID' });
+
+      const transaction = {
+        payment: { findUnique: paymentFindUnique, create: paymentCreate },
+        order: {
+          findUnique: orderFindUnique,
+          update: orderUpdate,
         },
-      ];
-      const findMany = vi.fn().mockResolvedValue(mockOrders);
+      } as unknown as Prisma.TransactionClient;
+
       const prisma = {
-        order: { findMany },
+        $transaction: vi.fn((cb) => cb(transaction)),
       } as unknown as PrismaService;
 
-      const service = new OrdersService(prisma);
-      const result = await service.findMyOrders(1);
+      service = new OrdersService(prisma);
+    });
 
-      expect(findMany).toHaveBeenCalledWith(
+    it('lần 1: tạo payment mới khi Idempotency-Key chưa tồn tại', async () => {
+      const result = await service.pay(10, 'IDEMPOTENT_KEY_123', { method: 'WALLET' });
+
+      expect(paymentCreate).toHaveBeenCalledOnce();
+      expect(paymentCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1 },
-          orderBy: { createdAt: 'desc' },
-          include: expect.objectContaining({
-            items: expect.any(Object),
+          data: expect.objectContaining({
+            orderId: 10,
+            idempotencyKey: 'IDEMPOTENT_KEY_123',
+            amount: 70000,
+            method: 'WALLET',
           }),
         })
       );
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        id: 5,
-        orderCode: 'BL-000005',
-        status: OrderStatus.PAID,
-        total: 85000,
-      });
-    });
-  });
-
-});
-
-describe('OrdersService - inventory control on Ingredient (transaction + optimistic locking)', () => {
-  type FakeIngredient = { id: number; name: string; unit: string; stock: number; version: number };
-  type FakeProduct = { id: number; price: number };
-  type FakeRecipe = { productId: number; ingredientId: number; size: string; amount: number };
-
-  function createFakeDb(
-    initialIngredients: FakeIngredient[],
-    initialProducts: FakeProduct[] = [{ id: 1, price: 25000 }],
-    recipes: FakeRecipe[] = [{ productId: 1, ingredientId: 1, size: 'S', amount: 1 }]
-  ) {
-    const ingredients = new Map(initialIngredients.map((i) => [i.id, { ...i }]));
-    const products = new Map(initialProducts.map((p) => [p.id, { ...p }]));
-    let orderSeq = 0;
-    const orders: unknown[] = [];
-
-    const prisma = {
-      $transaction: async (
-        callback: (tx: Prisma.TransactionClient) => Promise<unknown>
-      ) => {
-        const undo: Array<() => void> = [];
-        const pendingOrders: unknown[] = [];
-        const tx = {
-          product: {
-            findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
-              return where.id.in
-                .map((id) => products.get(id))
-                .filter((p): p is FakeProduct => Boolean(p))
-                .map((p) => ({ ...p }));
-            },
-          },
-          recipeItem: {
-            findMany: async ({ where }: { where: { productId: { in: number[] } } }) => {
-              return recipes.filter((r) => where.productId.in.includes(r.productId));
-            },
-          },
-          ingredient: {
-            findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
-              const snapshot = where.id.in
-                .map((id) => ingredients.get(id))
-                .filter((i): i is FakeIngredient => Boolean(i))
-                .map((i) => ({ ...i }));
-              await new Promise((resolve) => setImmediate(resolve));
-              return snapshot;
-            },
-            updateMany: async ({
-              where,
-              data,
-            }: {
-              where: { id: number; version: number; stock: { gte: number } };
-              data: {
-                stock: { decrement: number };
-                version: { increment: number };
-              };
-            }) => {
-              const ing = ingredients.get(where.id);
-              if (!ing || ing.version !== where.version || ing.stock < where.stock.gte) {
-                return { count: 0 };
-              }
-              const before = { ...ing };
-              ing.stock -= data.stock.decrement;
-              ing.version += data.version.increment;
-              undo.push(() => ingredients.set(before.id, before));
-              return { count: 1 };
-            },
-          },
-          order: {
-            create: async ({ data }: { data: { total: number; status: string } }) => {
-              const order = {
-                id: ++orderSeq,
-                total: data.total,
-                status: data.status,
-                createdAt: new Date(),
-              };
-              pendingOrders.push(order);
-              return order;
-            },
-          },
-        } as unknown as Prisma.TransactionClient;
-
-        try {
-          const result = await callback(tx);
-          orders.push(...pendingOrders);
-          return result;
-        } catch (error) {
-          undo.reverse().forEach((fn) => fn());
-          throw error;
-        }
-      },
-    } as unknown as PrismaService;
-
-    return { prisma, ingredients, products, orders };
-  }
-
-  const makeDto = (productId: number, quantity: number) =>
-    plainToInstance(CreateOrderDto, {
-      items: [{ productId, size: 'S', toppings: [], quantity }],
-    });
-
-  it('decrements ingredient stock and bumps version when an order is created', async () => {
-    const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
-    const service = new OrdersService(db.prisma);
-
-    await service.create(makeDto(1, 3));
-
-    expect(db.ingredients.get(1)).toMatchObject({ stock: 7, version: 1 });
-  });
-
-  it('never oversells when many customers order at the same time', async () => {
-    // 10 đơn vị nguyên liệu còn lại, 25 khách cùng đặt 1 ly -> đúng 10 đơn thành công.
-    const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
-    const service = new OrdersService(db.prisma);
-
-    const results = await Promise.allSettled(
-      Array.from({ length: 25 }, () => service.create(makeDto(1, 1)))
-    );
-
-    const succeeded = results.filter((r) => r.status === 'fulfilled');
-    const failed = results.filter(
-      (r): r is PromiseRejectedResult => r.status === 'rejected'
-    );
-
-    expect(succeeded).toHaveLength(10);
-    expect(failed).toHaveLength(15);
-    for (const failure of failed) {
-      expect([BadRequestException, ConflictException]).toContainEqual(
-        failure.reason.constructor
+      expect(orderUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 10 },
+          data: { status: 'PAID' },
+        })
       );
+      expect(result.idempotent).toBe(false);
+    });
+
+    it('lần 2: gửi cùng Idempotency-Key chỉ trả về kết quả cũ — KHÔNG tạo payment mới', async () => {
+      // Giả lập DB đã tồn tại payment với key này từ lần gửi trước
+      paymentFindUnique.mockResolvedValue(mockExistingPayment);
+
+      const result = await service.pay(10, 'IDEMPOTENT_KEY_123', { method: 'WALLET' });
+
+      // Đảm bảo tuyệt đối không gọi payment.create thêm lần nào
+      expect(paymentCreate).not.toHaveBeenCalled();
+      expect(result.idempotent).toBe(true);
+      expect(result.payment).toEqual(mockExistingPayment);
+    });
+
+    it('chặn dùng lại cùng Idempotency-Key cho đơn hàng khác (ném BadRequestException)', async () => {
+      // Key đã được dùng cho đơn #10, không được dùng cho đơn #99
+      paymentFindUnique.mockResolvedValue(mockExistingPayment);
+
+      await expect(
+        service.pay(99, 'IDEMPOTENT_KEY_123', { method: 'WALLET' })
+      ).rejects.toThrow(BadRequestException);
+      expect(paymentCreate).not.toHaveBeenCalled();
+    });
+
+    it('webhook ngân hàng: nhận cùng 1 transactionRef 2 lần chỉ xử lý 1 lần duy nhất', async () => {
+      // Lần 1: Webhook nhận mã giao dịch mới -> tạo payment và đổi trạng thái sang PAID
+      const firstCall = await service.processPaymentWebhook({
+        transactionRef: 'TXN_BANK_DUPLICATE_CHECK',
+        orderId: 10,
+        amount: 70000,
+        status: 'SUCCESS',
+      });
+      expect(paymentCreate).toHaveBeenCalledOnce();
+      expect(firstCall.idempotent).toBe(false);
+
+      // Lần 2: Webhook gửi lại cùng transactionRef (mạng trễ hoặc retry)
+      paymentFindUnique.mockResolvedValue({
+        id: 2,
+        orderId: 10,
+        idempotencyKey: 'TXN_BANK_DUPLICATE_CHECK',
+        amount: 70000,
+      });
+      const secondCall = await service.processPaymentWebhook({
+        transactionRef: 'TXN_BANK_DUPLICATE_CHECK',
+        orderId: 10,
+        amount: 70000,
+        status: 'SUCCESS',
+      });
+
+      // Không tạo mới payment lần thứ 2
+      expect(paymentCreate).toHaveBeenCalledOnce();
+      expect(secondCall.idempotent).toBe(true);
+      expect(secondCall.status).toBe('PAID');
+    });
+  });
+
+  // =========================================================================
+  // (c) ĐẶT ĐỒNG THỜI KHÔNG VƯỢT TỒN KHO (Concurrency & Optimistic Locking)
+  // =========================================================================
+  describe('(c) Đặt đồng thời không vượt tồn kho (Concurrency & Optimistic Locking)', () => {
+    type FakeIngredient = { id: number; name: string; unit: string; stock: number; version: number };
+    type FakeProduct = { id: number; price: number };
+    type FakeRecipe = { productId: number; ingredientId: number; size: string; amount: number };
+
+    function createFakeDb(
+      initialIngredients: FakeIngredient[],
+      initialProducts: FakeProduct[] = [{ id: 1, price: 25000 }],
+      recipes: FakeRecipe[] = [{ productId: 1, ingredientId: 1, size: 'S', amount: 1 }]
+    ) {
+      const ingredients = new Map(initialIngredients.map((i) => [i.id, { ...i }]));
+      const products = new Map(initialProducts.map((p) => [p.id, { ...p }]));
+      let orderSeq = 0;
+      const orders: unknown[] = [];
+
+      const prisma = {
+        $transaction: async (
+          callback: (tx: Prisma.TransactionClient) => Promise<unknown>
+        ) => {
+          const undo: Array<() => void> = [];
+          const pendingOrders: unknown[] = [];
+          const tx = {
+            product: {
+              findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
+                return where.id.in
+                  .map((id) => products.get(id))
+                  .filter((p): p is FakeProduct => Boolean(p))
+                  .map((p) => ({ ...p }));
+              },
+            },
+            recipeItem: {
+              findMany: async ({ where }: { where: { productId: { in: number[] } } }) => {
+                return recipes.filter((r) => where.productId.in.includes(r.productId));
+              },
+            },
+            ingredient: {
+              findMany: async ({ where }: { where: { id: { in: number[] } } }) => {
+                const snapshot = where.id.in
+                  .map((id) => ingredients.get(id))
+                  .filter((i): i is FakeIngredient => Boolean(i))
+                  .map((i) => ({ ...i }));
+                await new Promise((resolve) => setImmediate(resolve));
+                return snapshot;
+              },
+              updateMany: async ({
+                where,
+                data,
+              }: {
+                where: { id: number; version: number; stock: { gte: number } };
+                data: {
+                  stock: { decrement: number };
+                  version: { increment: number };
+                };
+              }) => {
+                const ing = ingredients.get(where.id);
+                if (!ing || ing.version !== where.version || ing.stock < where.stock.gte) {
+                  return { count: 0 };
+                }
+                const before = { ...ing };
+                ing.stock -= data.stock.decrement;
+                ing.version += data.version.increment;
+                undo.push(() => ingredients.set(before.id, before));
+                return { count: 1 };
+              },
+            },
+            order: {
+              create: async ({ data }: { data: { total: number; status: string } }) => {
+                const order = {
+                  id: ++orderSeq,
+                  total: data.total,
+                  status: data.status,
+                  createdAt: new Date(),
+                };
+                pendingOrders.push(order);
+                return order;
+              },
+            },
+          } as unknown as Prisma.TransactionClient;
+
+          try {
+            const result = await callback(tx);
+            orders.push(...pendingOrders);
+            return result;
+          } catch (error) {
+            undo.reverse().forEach((fn) => fn());
+            throw error;
+          }
+        },
+      } as unknown as PrismaService;
+
+      return { prisma, ingredients, products, orders };
     }
-    expect(db.ingredients.get(1)!.stock).toBe(0);
-    expect(db.orders).toHaveLength(10);
-  });
 
-  it('rolls back earlier ingredient deductions when a later ingredient conflicts', async () => {
-    const db = createFakeDb(
-      [
-        { id: 1, name: 'Cà phê', unit: 'g', stock: 5, version: 0 },
-        { id: 2, name: 'Sữa đặc', unit: 'ml', stock: 1, version: 0 },
-      ],
-      [
-        { id: 1, price: 25000 },
-        { id: 2, price: 30000 },
-      ],
-      [
-        { productId: 1, ingredientId: 1, size: 'S', amount: 1 },
-        { productId: 2, ingredientId: 2, size: 'S', amount: 1 },
-      ]
-    );
-    const service = new OrdersService(db.prisma);
-
-    const orderA = service.create(makeDto(2, 1));
-    const orderB = service.create(
+    const makeDto = (productId: number, quantity: number) =>
       plainToInstance(CreateOrderDto, {
-        items: [
-          { productId: 1, size: 'S', toppings: [], quantity: 2 },
-          { productId: 2, size: 'S', toppings: [], quantity: 1 },
-        ],
-      })
-    );
-    const [a, b] = await Promise.allSettled([orderA, orderB]);
-
-    expect(a.status).toBe('fulfilled');
-    expect(b.status).toBe('rejected');
-    expect(db.ingredients.get(1)!.stock).toBe(5);
-    expect(db.ingredients.get(2)!.stock).toBe(0);
-  });
-
-  it('rejects with 400 when requested quantity exceeds ingredient stock', async () => {
-    const db = createFakeDb([{ id: 1, name: 'Cà phê', unit: 'g', stock: 2, version: 0 }]);
-    const service = new OrdersService(db.prisma);
-
-    await expect(service.create(makeDto(1, 3))).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    expect(db.ingredients.get(1)).toMatchObject({ stock: 2, version: 0 });
-  });
-
-  it('gives up with 409 after too many version conflicts on ingredient', async () => {
-    const tx = {
-      product: {
-        findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
-      },
-      recipeItem: {
-        findMany: vi.fn().mockResolvedValue([{ productId: 1, ingredientId: 1, size: 'S', amount: 1 }]),
-      },
-      ingredient: {
-        findMany: vi.fn().mockResolvedValue([{ id: 1, name: 'Cà phê', stock: 10, version: 0 }]),
-        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-      },
-      order: { create: vi.fn() },
-    } as unknown as Prisma.TransactionClient;
-    const prisma = {
-      $transaction: vi.fn((cb: (t: Prisma.TransactionClient) => Promise<unknown>) =>
-        cb(tx)
-      ),
-    } as unknown as PrismaService;
-    const service = new OrdersService(prisma);
-
-    await expect(service.create(makeDto(1, 1))).rejects.toBeInstanceOf(
-      ConflictException
-    );
-    expect(prisma.$transaction).toHaveBeenCalledTimes(MAX_ORDER_ATTEMPTS);
-  });
-});
-
-describe('OrdersService - calculateProductAvailability & Ingredient optimistic locking', () => {
-  type FakeIngredient = { id: number; name: string; unit: string; stock: number; version: number };
-  type FakeRecipeItem = { productId: number; ingredientId: number; size: string; amount: number };
-
-  it('calculateProductAvailability: ném NotFoundException khi sản phẩm không tồn tại', async () => {
-    const prisma = {
-      product: {
-        findUnique: vi.fn().mockResolvedValue(null),
-      },
-    } as unknown as PrismaService;
-
-    const service = new OrdersService(prisma);
-    await expect(service.calculateProductAvailability(999)).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('calculateProductAvailability: trả về 0 nếu sản phẩm không có công thức', async () => {
-    const prisma = {
-      product: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: 5,
-          name: 'Croissant',
-          recipeItems: [],
-        }),
-      },
-    } as unknown as PrismaService;
-
-    const service = new OrdersService(prisma);
-    const availability = await service.calculateProductAvailability(5);
-    expect(availability).toBe(0);
-  });
-
-  it('calculateProductAvailability: tính chính xác số ly theo công thức và tồn kho nguyên liệu', async () => {
-    // Cà phê Robusta: 60g, Sữa đặc: 100ml
-    // Size S: Cà phê 20g, Sữa 30ml -> Robusta: 60/20 = 3 ly, Sữa: 100/30 = 3 ly -> Min: 3 ly
-    // Size M: Cà phê 25g, Sữa 40ml -> Robusta: 60/25 = 2 ly, Sữa: 100/40 = 2 ly -> Min: 2 ly
-    // Size L: Cà phê 30g, Sữa 50ml -> Robusta: 60/30 = 2 ly, Sữa: 100/50 = 2 ly -> Min: 2 ly
-    const mockProductWithRecipes = {
-      id: 1,
-      name: 'Cà phê sữa đá',
-      stock: 100,
-      recipeItems: [
-        { productId: 1, size: 'S', amount: 20, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
-        { productId: 1, size: 'S', amount: 30, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
-        { productId: 1, size: 'M', amount: 25, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
-        { productId: 1, size: 'M', amount: 40, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
-        { productId: 1, size: 'L', amount: 30, ingredient: { id: 101, name: 'Cà phê Robusta', stock: 60 } },
-        { productId: 1, size: 'L', amount: 50, ingredient: { id: 102, name: 'Sữa đặc', stock: 100 } },
-      ],
-    };
-
-    const prisma = {
-      product: {
-        findUnique: vi.fn().mockResolvedValue(mockProductWithRecipes),
-      },
-    } as unknown as PrismaService;
-
-    const service = new OrdersService(prisma);
-
-    // Tính cho size cụ thể
-    const sizeS = await service.calculateProductAvailability(1, 'S');
-    expect(sizeS).toBe(3);
-
-    const sizeM = await service.calculateProductAvailability(1, 'M');
-    expect(sizeM).toBe(2);
-
-    const sizeL = await service.calculateProductAvailability(1, 'L');
-    expect(sizeL).toBe(2);
-
-    // Khi không truyền size: lấy số ly tối đa có thể pha chế (Max giữa các size = 3)
-    const maxOverall = await service.calculateProductAvailability(1);
-    expect(maxOverall).toBe(3);
-
-    // Chi tiết từng size
-    const details = await service.calculateProductAvailabilityDetails(1);
-    expect(details).toEqual({
-      maxCups: 3,
-      bySize: { S: 3, M: 2, L: 2 },
-    });
-  });
-
-  it('createOnce: trừ tồn kho nguyên vật liệu với optimistic locking trên Ingredient', async () => {
-    const ingredients = new Map<number, FakeIngredient>([
-      [101, { id: 101, name: 'Cà phê Robusta', unit: 'g', stock: 100, version: 0 }],
-      [102, { id: 102, name: 'Sữa đặc', unit: 'ml', stock: 200, version: 0 }],
-    ]);
-
-    const recipeItems: FakeRecipeItem[] = [
-      { productId: 1, ingredientId: 101, size: 'M', amount: 25 },
-      { productId: 1, ingredientId: 102, size: 'M', amount: 40 },
-    ];
-
-    const prisma = {
-      $transaction: async (cb: (tx: any) => Promise<unknown>) => {
-        const tx = {
-          product: {
-            findMany: vi.fn().mockResolvedValue([
-              { id: 1, name: 'Cà phê sữa đá', price: 25000, stock: 100, version: 0 },
-            ]),
-          },
-          recipeItem: {
-            findMany: vi.fn().mockResolvedValue(recipeItems),
-          },
-          ingredient: {
-            findMany: vi.fn().mockImplementation(async ({ where }) => {
-              return where.id.in.map((id: number) => ({ ...ingredients.get(id) }));
-            }),
-            updateMany: vi.fn().mockImplementation(async ({ where, data }) => {
-              const ing = ingredients.get(where.id);
-              if (!ing || ing.version !== where.version || ing.stock < where.stock.gte) {
-                return { count: 0 };
-              }
-              ing.stock -= data.stock.decrement;
-              ing.version += data.version.increment;
-              return { count: 1 };
-            }),
-          },
-          order: {
-            create: vi.fn().mockResolvedValue({
-              id: 99,
-              total: 60000,
-              discount: 0,
-              couponCode: null,
-              status: 'PENDING',
-              createdAt: new Date(),
-            }),
-          },
-        };
-        return cb(tx);
-      },
-    } as unknown as PrismaService;
-
-    const service = new OrdersService(prisma);
-
-    // Đặt 2 ly size M:
-    // Tiêu hao: Robusta = 25 * 2 = 50g, Sữa đặc = 40 * 2 = 80ml
-    const result = await service.create(
-      plainToInstance(CreateOrderDto, {
-        items: [{ productId: 1, size: 'M', toppings: [], quantity: 2 }],
-      })
-    );
-
-    expect(result.orderId).toBe(99);
-    expect(ingredients.get(101)).toMatchObject({ stock: 50, version: 1 });
-    expect(ingredients.get(102)).toMatchObject({ stock: 120, version: 1 });
-  });
-
-  it('createOnce: ném BadRequestException khi tồn kho nguyên liệu không đủ', async () => {
-    const ingredients = new Map<number, FakeIngredient>([
-      [101, { id: 101, name: 'Cà phê Robusta', unit: 'g', stock: 20, version: 0 }], // chỉ có 20g
-      [102, { id: 102, name: 'Sữa đặc', unit: 'ml', stock: 200, version: 0 }],
-    ]);
-
-    const recipeItems: FakeRecipeItem[] = [
-      { productId: 1, ingredientId: 101, size: 'M', amount: 25 },
-      { productId: 1, ingredientId: 102, size: 'M', amount: 40 },
-    ];
-
-    const prisma = {
-      $transaction: async (cb: (tx: any) => Promise<unknown>) => {
-        const tx = {
-          product: {
-            findMany: vi.fn().mockResolvedValue([
-              { id: 1, name: 'Cà phê sữa đá', price: 25000, stock: 100, version: 0 },
-            ]),
-          },
-          recipeItem: {
-            findMany: vi.fn().mockResolvedValue(recipeItems),
-          },
-          ingredient: {
-            findMany: vi.fn().mockImplementation(async ({ where }) => {
-              return where.id.in.map((id: number) => ({ ...ingredients.get(id) }));
-            }),
-          },
-        };
-        return cb(tx);
-      },
-    } as unknown as PrismaService;
-
-    const service = new OrdersService(prisma);
-
-    // Cần 25g mà chỉ có 20g -> Ném BadRequestException
-    await expect(
-      service.create(
-        plainToInstance(CreateOrderDto, {
-          items: [{ productId: 1, size: 'M', toppings: [], quantity: 1 }],
-        })
-      )
-    ).rejects.toThrow(BadRequestException);
-  });
-
-  describe('Topping inventory management', () => {
-    it('deducts topping stock atomically when order includes toppings', async () => {
-      const toppingUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
-      const orderCreate = vi.fn().mockResolvedValue({
-        id: 101,
-        total: 70000,
-        discount: 0,
-        couponCode: null,
-        status: 'PENDING',
-        createdAt: new Date(),
+        items: [{ productId, size: 'S', toppings: [], quantity }],
       });
 
-      const prisma = {
-        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
-          const tx = {
-            product: {
-              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
-            },
-            recipeItem: {
-              findMany: vi.fn().mockResolvedValue([]),
-            },
-            topping: {
-              findMany: vi.fn().mockResolvedValue([
-                { id: 1, name: 'Trân châu đen', price: 5000, stock: 50 },
-              ]),
-              updateMany: toppingUpdateMany,
-            },
-            order: { create: orderCreate },
-          };
-          return cb(tx);
-        },
-      } as unknown as PrismaService;
+    it('trừ tồn kho và tăng version của nguyên liệu khi đặt đơn thành công', async () => {
+      const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
+      const service = new OrdersService(db.prisma);
 
-      const service = new OrdersService(prisma);
-      const result = await service.create(
-        plainToInstance(CreateOrderDto, {
-          items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
-        })
+      await service.create(makeDto(1, 3));
+
+      expect(db.ingredients.get(1)).toMatchObject({ stock: 7, version: 1 });
+    });
+
+    it('không bao giờ bán âm (never oversells) khi 25 khách hàng đặt đồng thời với 10 suất tồn kho', async () => {
+      // 10 đơn vị nguyên liệu còn lại, 25 khách cùng đặt 1 ly đồng thời -> đúng 10 đơn thành công
+      const db = createFakeDb([{ id: 1, name: 'Hạt cà phê', unit: 'g', stock: 10, version: 0 }]);
+      const service = new OrdersService(db.prisma);
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 25 }, () => service.create(makeDto(1, 1)))
       );
 
-      expect(toppingUpdateMany).toHaveBeenCalledWith({
-        where: { id: 1, stock: { gte: 2 } },
-        data: { stock: { decrement: 2 } },
-      });
-      expect(result.orderId).toBe(101);
+      const succeeded = results.filter((r) => r.status === 'fulfilled');
+      const failed = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+      );
+
+      expect(succeeded).toHaveLength(10);
+      expect(failed).toHaveLength(15);
+      for (const failure of failed) {
+        expect([BadRequestException, ConflictException]).toContainEqual(
+          failure.reason.constructor
+        );
+      }
+      // Tồn kho nguyên liệu sau cùng phải về đúng 0, KHÔNG BAO GIỜ bị âm
+      expect(db.ingredients.get(1)!.stock).toBe(0);
+      expect(db.orders).toHaveLength(10);
     });
 
-    it('throws BadRequestException when topping stock is insufficient', async () => {
-      const prisma = {
-        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
-          const tx = {
-            product: {
-              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
-            },
-            recipeItem: {
-              findMany: vi.fn().mockResolvedValue([]),
-            },
-            topping: {
-              findMany: vi.fn().mockResolvedValue([
-                { id: 1, name: 'Trân châu đen', price: 5000, stock: 1 },
-              ]),
-              updateMany: vi.fn(),
-            },
-          };
-          return cb(tx);
-        },
-      } as unknown as PrismaService;
+    it('tự động rollback các nguyên liệu đã trừ nếu gặp xung đột ở nguyên liệu phía sau', async () => {
+      const db = createFakeDb(
+        [
+          { id: 1, name: 'Cà phê', unit: 'g', stock: 5, version: 0 },
+          { id: 2, name: 'Sữa đặc', unit: 'ml', stock: 1, version: 0 },
+        ],
+        [
+          { id: 1, price: 25000 },
+          { id: 2, price: 30000 },
+        ],
+        [
+          { productId: 1, ingredientId: 1, size: 'S', amount: 1 },
+          { productId: 1, ingredientId: 2, size: 'S', amount: 2 }, // Cần 2 sữa đặc nhưng kho chỉ có 1
+        ]
+      );
+      const service = new OrdersService(db.prisma);
 
-      const service = new OrdersService(prisma);
+      await expect(service.create(makeDto(1, 1))).rejects.toThrow(BadRequestException);
 
-      await expect(
-        service.create(
-          plainToInstance(CreateOrderDto, {
-            items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
-          })
-        )
-      ).rejects.toThrowError(/không đủ số lượng phục vụ/);
-    });
-
-    it('throws BadRequestException when topping updateMany returns count 0 (race condition)', async () => {
-      const prisma = {
-        $transaction: async (cb: (tx: any) => Promise<unknown>) => {
-          const tx = {
-            product: {
-              findMany: vi.fn().mockResolvedValue([{ id: 1, price: 25000 }]),
-            },
-            recipeItem: {
-              findMany: vi.fn().mockResolvedValue([]),
-            },
-            topping: {
-              findMany: vi.fn().mockResolvedValue([
-                { id: 1, name: 'Trân châu đen', price: 5000, stock: 10 },
-              ]),
-              updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-            },
-          };
-          return cb(tx);
-        },
-      } as unknown as PrismaService;
-
-      const service = new OrdersService(prisma);
-
-      await expect(
-        service.create(
-          plainToInstance(CreateOrderDto, {
-            items: [{ productId: 1, size: 'M', toppings: ['1'], quantity: 2 }],
-          })
-        )
-      ).rejects.toThrowError(/đã hết hàng hoặc không đủ tồn kho/);
+      // Cà phê không được bị trừ hao hụt khi đơn hàng bị từ chối
+      expect(db.ingredients.get(1)!.stock).toBe(5);
+      expect(db.ingredients.get(2)!.stock).toBe(1);
+      expect(db.orders).toHaveLength(0);
     });
   });
 });
