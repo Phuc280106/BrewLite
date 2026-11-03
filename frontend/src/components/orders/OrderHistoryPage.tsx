@@ -195,7 +195,7 @@ export default function OrderHistoryPage() {
 
         {/* Chưa đăng nhập */}
         {!user && !isLoading && (
-          <div className="my-12 text-center bg-white border border-stone-200 rounded-3xl p-8 sm:p-12 shadow-sm">
+          <div className="my-12 flex flex-col items-center text-center bg-white border border-stone-200 rounded-3xl p-8 sm:p-12 shadow-sm">
             <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-200">
               <Icon name="cup" size={32} />
             </div>
@@ -249,7 +249,7 @@ export default function OrderHistoryPage() {
 
         {/* Đã đăng nhập nhưng không có đơn hàng nào */}
         {user && !isLoading && !error && orders.length === 0 && (
-          <div className="my-12 text-center bg-white border border-stone-200 rounded-3xl p-8 sm:p-12 shadow-sm">
+          <div className="my-12 flex flex-col items-center text-center bg-white border border-stone-200 rounded-3xl p-8 sm:p-12 shadow-sm">
             <div className="w-16 h-16 rounded-2xl bg-stone-100 text-stone-400 flex items-center justify-center mx-auto mb-4">
               <Icon name="bag" size={32} />
             </div>

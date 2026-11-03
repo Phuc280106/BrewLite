@@ -7,6 +7,7 @@ import ProductDetailModal from '../product/ProductDetailModal';
 import Icon from '../common/Icon';
 import ProductCard from './ProductCard';
 import { useCartStore } from '../cart/useCartStore';
+import { useAuthStore } from '../../store/useAuthStore';
 
 const CATEGORIES = [
   'All Drinks',
@@ -54,6 +55,17 @@ export default function MenuSection() {
   );
   const cart = useCartStore((state) => state.cart);
   const addToCart = useCartStore((state) => state.addToCart);
+  const user = useAuthStore((state) => state.user);
+  const openAuthModal = useAuthStore((state) => state.openAuthModal);
+
+  const handleProductSelect = (product: ProductItem) => {
+    if (!user) {
+      openAuthModal('login', 'Vui lòng đăng nhập để đặt sản phẩm.');
+      return;
+    }
+
+    setSelectedProduct(product);
+  };
 
   useEffect(() => {
     async function fetchProducts(showLoading = false) {
@@ -211,7 +223,7 @@ export default function MenuSection() {
                 key={product.id}
                 product={product}
                 quantityInCart={quantityInCart}
-                onSelect={setSelectedProduct}
+                onSelect={handleProductSelect}
               />
             );
           })}
