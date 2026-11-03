@@ -32,18 +32,20 @@ model User {
 }
 
 model Order {
-  id         Int      @id @default(autoincrement())
-  userId     Int?
-  user       User?    @relation(fields: [userId], references: [id])
-  total      Float
-  discount   Float    @default(0) // Số tiền giảm giá
-  couponCode String? // Mã khuyến mãi đã áp dụng
-  status     String   @default("PENDING") // PENDING, PAID, PREPARING, READY, COMPLETED, CANCELLED, PAYMENT_FAILED
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id            Int         @id @default(autoincrement())
+  userId        Int?
+  user          User?       @relation(fields: [userId], references: [id])
+  total         Float
+  discount      Float       @default(0) // Số tiền giảm giá
+  couponCode    String?     // Mã khuyến mãi đã áp dụng
+  pointsUsed    Int         @default(0) // Số điểm thưởng thành viên đã dùng
+  pointDiscount Float       @default(0) // Số tiền giảm từ điểm thưởng (1 điểm = 1.000đ)
+  status        String      @default("PENDING") // PENDING, PAID, PREPARING, READY, COMPLETED, CANCELLED, PAYMENT_FAILED
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
-  items    OrderItem[]
-  payments Payment[]
+  items         OrderItem[]
+  payments      Payment[]
 }
 
 model Promotion {

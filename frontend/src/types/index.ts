@@ -78,6 +78,8 @@ export interface CreateOrderResponse {
   total: number;
   discount?: number;
   couponCode?: string | null;
+  pointsUsed?: number;
+  pointDiscount?: number;
   status: string;
   createdAt: string;
 }
@@ -133,6 +135,8 @@ export interface OrderStatusResponse {
   total: number;
   discount: number;
   couponCode: string | null;
+  pointsUsed?: number;
+  pointDiscount?: number;
   updatedAt: string;
 }
 
@@ -146,6 +150,7 @@ export interface PaymentResponse {
     idempotencyKey: string;
     createdAt: string;
   };
+  pointsUsed?: number;
   loyaltyPointsEarned?: number;
 }
 
