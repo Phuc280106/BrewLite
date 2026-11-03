@@ -107,7 +107,23 @@ export class PaymentsController {
     }
 
     if (!verifyResult.isSuccess) {
-      this.logger.warn(`[VNPay Callback] Giao dịch thất bại với mã lỗi: ${verifyResult.responseCode}`);
+      this.logger.warn(`[VNPay Callback] Giao dịch thất bại hoặc bị hủy với mã lỗi: ${verifyResult.responseCode}`);
+
+      // Nếu khách hủy giao dịch hoặc thanh toán không thành công -> Cập nhật sang CANCELLED và hoàn kho
+      if (verifyResult.orderId) {
+        try {
+          const currentOrder = await this.ordersService.getOrderStatus(verifyResult.orderId);
+          if (currentOrder.status === 'PENDING' || currentOrder.status === 'PAYMENT_FAILED') {
+            await this.ordersService.cancelOrder(
+              verifyResult.orderId,
+              `VNPay: ${verifyResult.message || 'Khách hàng hủy thanh toán'}`
+            );
+          }
+        } catch (err) {
+          this.logger.error(`[VNPay Callback] Lỗi khi hủy đơn #${verifyResult.orderId}: ${(err as Error).message}`);
+        }
+      }
+
       return {
         success: false,
         orderId: verifyResult.orderId,

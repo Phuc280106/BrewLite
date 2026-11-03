@@ -26,9 +26,27 @@ describe('PaymentsController (Fintech Webhook Architecture)', () => {
       }),
     };
 
+    const vnpayService = {
+      createPaymentUrl: vi.fn().mockReturnValue('https://sandbox.vnpayment.vn/test'),
+      verifyReturn: vi.fn().mockReturnValue({
+        isValid: true,
+        isSuccess: false,
+        orderId: 10,
+        responseCode: '24',
+        message: 'Khách hàng hủy giao dịch',
+      }),
+    };
+
+    (ordersService as any).cancelOrder = vi.fn().mockResolvedValue({
+      id: 10,
+      orderCode: 'BL-000010',
+      status: 'CANCELLED',
+    });
+
     controller = new PaymentsController(
       ordersService as OrdersService,
-      mockGatewayService
+      mockGatewayService,
+      vnpayService as any
     );
   });
 
@@ -113,5 +131,22 @@ describe('PaymentsController (Fintech Webhook Architecture)', () => {
     const result = await controller.checkStatus(10);
     expect(ordersService.getOrderStatus).toHaveBeenCalledWith(10);
     expect(result).toMatchObject({ orderId: 10, status: 'PENDING' });
+  });
+  it('VNPay return hủy giao dịch (code 24) -> tự động gọi cancelOrder và hoàn kho', async () => {
+    const result = await controller.handleVnpayReturn({
+      vnp_ResponseCode: '24',
+      vnp_TxnRef: '10_123456789',
+    });
+
+    expect(ordersService.getOrderStatus).toHaveBeenCalledWith(10);
+    expect((ordersService as any).cancelOrder).toHaveBeenCalledWith(
+      10,
+      expect.stringContaining('hủy')
+    );
+    expect(result).toMatchObject({
+      success: false,
+      orderId: 10,
+      responseCode: '24',
+    });
   });
 });

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   ConflictException,
   Injectable,
   Logger,
@@ -568,6 +569,152 @@ export class OrdersService {
    * Cập nhật trạng thái đơn hàng theo Order State Machine (Task 10.1).
    * Dùng `assertTransition` để chặn mọi chuyển tiếp trạng thái không hợp lệ (ném lỗi 400).
    */
+  /**
+   * Hoàn trả tồn kho nguyên liệu và topping khi đơn hàng bị HỦY.
+   */
+  async rollbackInventory(orderId: number, tx: Prisma.TransactionClient) {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order || !order.items || order.items.length === 0) return;
+
+    const productIds = [...new Set(order.items.map((it) => it.productId))];
+
+    // 1. Hoàn trả nguyên liệu theo công thức
+    const recipeItems = (tx as any).recipeItem?.findMany
+      ? await (tx as any).recipeItem.findMany({
+          where: { productId: { in: productIds } },
+        })
+      : [];
+
+    const recipesByKey = new Map<string, Array<{ ingredientId: number; amount: number }>>();
+    for (const r of recipeItems) {
+      const key = `${r.productId}_${r.size.toUpperCase()}`;
+      if (!recipesByKey.has(key)) recipesByKey.set(key, []);
+      recipesByKey.get(key)!.push({
+        ingredientId: r.ingredientId,
+        amount: r.amount,
+      });
+    }
+
+    const ingredientReturnMap = new Map<number, number>();
+    for (const item of order.items) {
+      const key = `${item.productId}_${item.size.toUpperCase()}`;
+      const recipes = recipesByKey.get(key) || [];
+      for (const r of recipes) {
+        const needed = r.amount * item.qty;
+        ingredientReturnMap.set(
+          r.ingredientId,
+          (ingredientReturnMap.get(r.ingredientId) ?? 0) + needed
+        );
+      }
+    }
+
+    if (ingredientReturnMap.size > 0 && (tx as any).ingredient?.update) {
+      for (const [ingredientId, amount] of ingredientReturnMap) {
+        await (tx as any).ingredient.update({
+          where: { id: ingredientId },
+          data: {
+            stock: { increment: Math.round(amount) },
+            version: { increment: 1 },
+          },
+        });
+      }
+    }
+
+    // 2. Hoàn trả Topping
+    const dbToppings: Array<{ id: number; name: string; price: number; stock: number }> =
+      (tx as any).topping?.findMany ? await (tx as any).topping.findMany() : [];
+
+    const toppingReturnMap = new Map<number, number>();
+    for (const item of order.items) {
+      if (!item.toppings) continue;
+      let toppingKeys: string[] = [];
+      try {
+        const parsed = JSON.parse(item.toppings);
+        toppingKeys = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch {
+        toppingKeys = item.toppings.split(',').map((s) => s.trim());
+      }
+
+      for (const tKey of toppingKeys) {
+        const matched = this.resolveTopping(tKey, dbToppings);
+        if (matched) {
+          toppingReturnMap.set(
+            matched.id,
+            (toppingReturnMap.get(matched.id) ?? 0) + item.qty
+          );
+        }
+      }
+    }
+
+    if (toppingReturnMap.size > 0 && (tx as any).topping?.update) {
+      for (const [toppingId, qty] of toppingReturnMap) {
+        await (tx as any).topping.update({
+          where: { id: toppingId },
+          data: { stock: { increment: qty } },
+        });
+      }
+    }
+  }
+
+  /**
+   * Hủy đơn hàng và hoàn trả nguyên vật liệu về kho.
+   */
+  async cancelOrder(orderId: number, reason?: string, userId?: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    if (userId && order.userId && order.userId !== userId) {
+      throw new ForbiddenException('Bạn không có quyền hủy đơn hàng này');
+    }
+
+    assertTransition(order.status as OrderStatus, OrderStatus.CANCELLED);
+
+    const execute = async (tx: Prisma.TransactionClient) => {
+      await this.rollbackInventory(orderId, tx);
+
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.CANCELLED },
+        include: {
+          items: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  imageUrl: true,
+                  price: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      this.logger.log(`[Order Cancelled] Đơn hàng #${orderId} đã được hủy. Lý do: ${reason || 'Không rõ'}`);
+
+      return {
+        ...updatedOrder,
+        orderCode: `BL-${String(updatedOrder.id).padStart(6, '0')}`,
+      };
+    };
+
+    if (typeof this.prisma.$transaction === 'function') {
+      return this.prisma.$transaction(execute);
+    }
+    return execute(this.prisma as unknown as Prisma.TransactionClient);
+  }
+
   async updateStatus(orderId: number, newStatus: OrderStatus | string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -578,6 +725,10 @@ export class OrdersService {
     }
 
     assertTransition(order.status as OrderStatus, newStatus as OrderStatus);
+
+    if (newStatus === OrderStatus.CANCELLED) {
+      return this.cancelOrder(orderId, 'Cập nhật sang CANCELLED qua updateStatus');
+    }
 
     const updatedOrder = await this.prisma.order.update({
       where: { id: orderId },

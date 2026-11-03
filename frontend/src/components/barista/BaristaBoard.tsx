@@ -55,10 +55,10 @@ export default function BaristaBoard() {
   useEffect(() => {
     if (isBarista) {
       fetchOrders();
-      // Auto-refresh mỗi 10 giây cho Barista KDS
+      // Auto-refresh mỗi 3 giây cho Barista KDS
       const interval = setInterval(() => {
         fetchOrders(true);
-      }, 10000);
+      }, 3000);
       return () => clearInterval(interval);
     } else {
       setIsLoading(false);

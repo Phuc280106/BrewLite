@@ -160,13 +160,28 @@ function VnpayReturnContent() {
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={() => router.push('/')}
-              className="w-full py-3.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-2xl text-xs transition-colors shadow-md"
-            >
-              Quay lại Giỏ hàng
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentView('orders');
+                  router.push('/');
+                }}
+                className="w-full py-3.5 px-4 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-2xl text-xs transition-colors shadow-md"
+              >
+                Xem Lịch sử Đơn hàng
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentView('menu');
+                  router.push('/');
+                }}
+                className="w-full py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-2xl text-xs transition-colors"
+              >
+                Về Trang chủ Thực đơn
+              </button>
+            </>
           )}
         </div>
       </div>

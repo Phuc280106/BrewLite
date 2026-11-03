@@ -565,6 +565,15 @@ describe('OrdersService', () => {
       expect(orderUpdate).not.toHaveBeenCalled();
     });
 
+    it('chặn hủy đơn khi đã ở trạng thái PREPARING (không cho phép PREPARING -> CANCELLED)', async () => {
+      orderFindUnique.mockResolvedValue({ id: 10, status: OrderStatus.PREPARING });
+
+      await expect(
+        service.updateStatus(10, OrderStatus.CANCELLED)
+      ).rejects.toThrow(BadRequestException);
+      expect(orderUpdate).not.toHaveBeenCalled();
+    });
+
     it('chặn chuyển tiếp từ trạng thái kết thúc (COMPLETED hoặc CANCELLED)', async () => {
       orderFindUnique.mockResolvedValue({ id: 10, status: OrderStatus.COMPLETED });
 
