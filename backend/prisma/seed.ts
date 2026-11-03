@@ -14,7 +14,7 @@ async function main() {
       category: 'Coffee',
       price: 25000,
       imageUrl:
-        'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?w=500',
+        'https://images.unsplash.com/photo-1781663904565-cfdf6a21a9d9?w=500',
     },
     {
       name: 'Americano Đá',
@@ -30,7 +30,7 @@ async function main() {
       category: 'Coffee',
       price: 29000,
       imageUrl:
-        'https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=500',
+        'https://images.unsplash.com/photo-1618577622624-306c041122fb?w=500',
     },
     {
       name: 'Trà đào cam sả',
@@ -48,7 +48,7 @@ async function main() {
       category: 'Blended Ice',
       price: 45000,
       imageUrl:
-        'https://images.unsplash.com/photo-1570696587429-19ec024c6e6e?w=500',
+        'https://images.unsplash.com/photo-1775846933630-3c1531299e5a?w=500',
     },
     {
       name: 'Cappuccino Nóng',
@@ -57,7 +57,7 @@ async function main() {
       category: 'Coffee',
       price: 35000,
       imageUrl:
-        'https://images.unsplash.com/photo-1534687941688-6c9fa1265842?w=500',
+        'https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=500',
     },
   ];
   for (const product of products) {
