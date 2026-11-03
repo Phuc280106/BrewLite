@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule, ObserveInstrument } from './app.module.js';
+import { AppModule } from './app.module.js';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 try {
@@ -9,9 +9,7 @@ try {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    instrument: ObserveInstrument,
-  });
+  const app = await NestFactory.create(AppModule);
 
   // Bật CORS cho Frontend gọi không bị lỗi
   app.enableCors();
@@ -24,7 +22,7 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('swagger', app, document); // Đường dẫn vào Swagger là /api
+  SwaggerModule.setup('swagger', app, document); // Đường dẫn vào Swagger là /swagger
 
   // Đổi cổng Backend sang 3001 và cho phép các thiết bị trong mạng LAN (điện thoại) kết nối
   await app.listen(process.env.PORT ?? 3001, '0.0.0.0');
