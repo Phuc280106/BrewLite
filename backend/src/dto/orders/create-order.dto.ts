@@ -13,7 +13,6 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ALLOWED_SIZE_IDS,
-  ALLOWED_TOPPING_IDS,
 } from '../../common/constants/options.constants.js';
 import type { ProductSizeId } from '../../common/constants/options.constants.js';
 
@@ -27,10 +26,10 @@ export class CreateOrderItemDto {
   @IsIn(ALLOWED_SIZE_IDS)
   size!: ProductSizeId;
 
-  @ApiProperty({ enum: ALLOWED_TOPPING_IDS, isArray: true, example: ['pearl'] })
+  @ApiProperty({ isArray: true, example: ['pearl', '1'] })
   @IsArray()
   @ArrayUnique()
-  @IsIn(ALLOWED_TOPPING_IDS, { each: true })
+  @IsString({ each: true })
   toppings!: string[];
 
   @ApiProperty({ example: 2, minimum: 1 })

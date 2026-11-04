@@ -43,16 +43,14 @@ function ProductDetailDialog({
   onAddToCart,
 }: ProductDetailDialogProps) {
   const [product, setProduct] = useState<ProductItem>(initialProduct);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [availabilityBySize, setAvailabilityBySize] = useState<Record<string, number> | null>(null);
   const [maxAvailability, setMaxAvailability] = useState<number | null>(null);
 
-  // Gọi API GET /products/:id và GET /orders/availability/:id để lấy dữ liệu tồn kho nguyên liệu mới nhất
+  // Gọi API GET /products/:id và GET /orders/availability/:id để kiểm tra tồn kho mới nhất
   useEffect(() => {
     let isMounted = true;
     async function fetchDetail() {
       try {
-        setIsRefreshing(true);
         const [prodRes, availRes] = await Promise.allSettled([
           api.get<ProductResponse>(`/products/${initialProduct.id}`),
           api.get<{ productId: number; maxCups: number; availability: number; bySize?: Record<string, number> }>(
@@ -84,8 +82,6 @@ function ProductDetailDialog({
         }
       } catch (err) {
         console.warn(`Lỗi lấy chi tiết sản phẩm ${initialProduct.id}:`, err);
-      } finally {
-        if (isMounted) setIsRefreshing(false);
       }
     }
 
@@ -176,33 +172,6 @@ function ProductDetailDialog({
             <p className="text-xs text-stone-500 mt-1 leading-relaxed">
               {product.note}
             </p>
-            <div className="flex items-center gap-2 mt-2">
-              <span
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
-                  currentSizeAvailability > 0
-                    ? currentSizeAvailability <= 5
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-rose-100 text-rose-800 border border-rose-300'
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    currentSizeAvailability > 0 ? 'bg-amber-500 animate-pulse' : 'bg-rose-500'
-                  }`}
-                />
-                {currentSizeAvailability > 0
-                  ? currentSizeAvailability <= 5
-                    ? `Chỉ còn nguyên liệu làm ${currentSizeAvailability} ly`
-                    : `Còn nguyên liệu làm ${currentSizeAvailability} ly`
-                  : `Tạm thời hết hàng (Không đủ nguyên liệu)`}
-              </span>
-              {isRefreshing && (
-                <span className="text-[10px] text-stone-400 italic">
-                  (đang kiểm tra kho...)
-                </span>
-              )}
-            </div>
           </div>
 
           <hr className="border-stone-200" />

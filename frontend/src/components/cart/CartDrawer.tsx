@@ -158,7 +158,7 @@ export default function CartDrawer({
                       className="disabled:opacity-30 disabled:cursor-not-allowed"
                       title={
                         item.maxStock !== undefined && item.quantity >= item.maxStock
-                          ? `Đã đạt số lượng tối đa có thể pha chế (${item.maxStock} ly)`
+                          ? 'Đã đạt số lượng tối đa có thể đặt'
                           : 'Tăng số lượng'
                       }
                     >
