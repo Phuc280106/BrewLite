@@ -774,6 +774,30 @@ export class OrdersService {
     const execute = async (tx: Prisma.TransactionClient) => {
       await this.rollbackInventory(orderId, tx);
 
+      // Hoàn trả điểm thưởng đã dùng và thu hồi điểm đã tích nếu đơn bị hủy từ trạng thái PAID
+      if (order.userId && (tx as any).user?.findUnique && (tx as any).user?.update) {
+        let pointsToRefund = order.pointsUsed || 0;
+        let pointsToDeductEarned = 0;
+        if (order.status === OrderStatus.PAID) {
+          pointsToDeductEarned = Math.floor(order.total / LOYALTY_EARN_RATE);
+        }
+        const netPointsChange = pointsToRefund - pointsToDeductEarned;
+        if (netPointsChange !== 0) {
+          const user = await (tx as any).user.findUnique({
+            where: { id: order.userId },
+            select: { loyaltyPoints: true },
+          });
+          if (user) {
+            await (tx as any).user.update({
+              where: { id: order.userId },
+              data: {
+                loyaltyPoints: Math.max(0, user.loyaltyPoints + netPointsChange),
+              },
+            });
+          }
+        }
+      }
+
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
         data: { status: OrderStatus.CANCELLED },

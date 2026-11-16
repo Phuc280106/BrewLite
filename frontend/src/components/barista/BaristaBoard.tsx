@@ -503,21 +503,50 @@ export default function BaristaBoard() {
 
                         {/* PENDING: Đơn chờ khách thanh toán -> Nhân viên KHÔNG chuyển sang PAID bằng tay */}
                         {order.status === 'PENDING' && (
-                          <div className="py-2.5 px-3 rounded-2xl bg-amber-50 border border-amber-200 text-center text-xs font-semibold text-amber-800">
-                            ⏳ Đơn đang chờ khách hàng thanh toán trực tuyến
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 py-2 px-3 rounded-2xl bg-amber-50 border border-amber-200 text-center text-xs font-semibold text-amber-800">
+                              ⏳ Chờ thanh toán trực tuyến
+                            </div>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Hủy đơn hàng chưa thanh toán #${order.orderCode || order.id}?`)) {
+                                  handleUpdateStatus(order.id, 'CANCELLED');
+                                }
+                              }}
+                              disabled={isUpdating}
+                              className="py-2 px-2.5 rounded-2xl bg-stone-100 hover:bg-rose-50 hover:text-rose-600 text-stone-500 border border-stone-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                              title="Hủy đơn chưa thanh toán"
+                            >
+                              ✕
+                            </button>
                           </div>
                         )}
 
-                        {/* PAID: Đã thanh toán -> Nút bấm bắt đầu pha chế PREPARING */}
+                        {/* PAID: Đã thanh toán -> Nút bắt đầu pha chế PREPARING & Nút Hủy đơn CANCELLED */}
                         {order.status === 'PAID' && (
-                          <button
-                            onClick={() => handleUpdateStatus(order.id, 'PREPARING')}
-                            disabled={isUpdating}
-                            className="w-full py-2.5 px-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-98"
-                          >
-                            <span>☕</span>
-                            <span>{isUpdating ? 'Đang cập nhật...' : 'Bắt đầu pha chế (→ PREPARING)'}</span>
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleUpdateStatus(order.id, 'PREPARING')}
+                              disabled={isUpdating}
+                              className="flex-1 py-2.5 px-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-98"
+                            >
+                              <span>☕</span>
+                              <span>{isUpdating ? 'Đang cập nhật...' : 'Bắt đầu pha chế (→ PREPARING)'}</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Bạn có chắc chắn muốn hủy đơn hàng #${order.orderCode || order.id}? Toàn bộ nguyên liệu sẽ được hoàn trả lại kho.`)) {
+                                  handleUpdateStatus(order.id, 'CANCELLED');
+                                }
+                              }}
+                              disabled={isUpdating}
+                              className="py-2.5 px-3 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 active:scale-98"
+                              title="Hủy đơn hàng và hoàn trả nguyên liệu (→ CANCELLED)"
+                            >
+                              <span>✕</span>
+                              <span>Hủy</span>
+                            </button>
+                          </div>
                         )}
 
                         {/* PREPARING: Đang pha -> Nút bấm hoàn thành READY */}

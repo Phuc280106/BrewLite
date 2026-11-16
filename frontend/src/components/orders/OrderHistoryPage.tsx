@@ -18,6 +18,7 @@ export default function OrderHistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [payingOrderId, setPayingOrderId] = useState<number | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
 
   const fetchOrders = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
@@ -61,6 +62,31 @@ export default function OrderHistoryPage() {
       console.error('Failed to initiate payment:', err);
       alert('Không thể khởi tạo thanh toán cho đơn hàng này. Vui lòng thử lại sau.');
       setPayingOrderId(null);
+    }
+  };
+
+  // Xử lý hủy đơn hàng (áp dụng cho đơn PENDING hoặc PAID khi quán chưa pha chế)
+  const handleCancelOrder = async (orderId: number, orderCode?: string) => {
+    if (
+      !window.confirm(
+        `Bạn có chắc chắn muốn hủy đơn hàng ${orderCode || `#${orderId}`}? Đơn hàng sẽ được chuyển sang trạng thái ĐÃ HỦY và hoàn lại điểm thưởng (nếu có).`
+      )
+    ) {
+      return;
+    }
+    setCancellingOrderId(orderId);
+    try {
+      await api.patch(`/orders/${orderId}/status`, { status: 'CANCELLED' });
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: 'CANCELLED' } : o))
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('brewlite:refresh-products'));
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Có lỗi xảy ra khi hủy đơn hàng');
+    } finally {
+      setCancellingOrderId(null);
     }
   };
 
@@ -340,6 +366,18 @@ export default function OrderHistoryPage() {
                         <span className={`w-2 h-2 rounded-full ${badge.dot}`} />
                         {badge.label}
                       </span>
+
+                      {/* Nút hủy đơn khi đơn ở trạng thái PAID hoặc PENDING */}
+                      {(order.status === 'PAID' || order.status === 'PENDING') && (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelOrder(order.id, order.orderCode)}
+                          disabled={cancellingOrderId === order.id}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-xl text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {cancellingOrderId === order.id ? 'Đang hủy...' : 'Hủy đơn'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
