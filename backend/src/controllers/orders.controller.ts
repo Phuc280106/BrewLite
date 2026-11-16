@@ -135,4 +135,17 @@ export class OrdersController {
   ) {
     return this.ordersService.updateStatus(id, body.status);
   }
+
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Hủy đơn hàng (Áp dụng khi đơn ở PENDING, PAYMENT_FAILED hoặc PAID)',
+  })
+  cancelOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user: { id: number } }
+  ) {
+    return this.ordersService.cancelOrder(id, 'Khách hàng yêu cầu hủy đơn', req.user.id);
+  }
 }
